@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simbinary"
+version = "0.1.0"
+description = "Simulation of Gaia astrometry for binary systems"
+authors = [{ name = "Katia Sivkova" }]
+dependencies = []
+
