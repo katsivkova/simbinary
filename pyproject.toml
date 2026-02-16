@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["simbinary"]
+
+[tool.setuptools.dynamic]
+version = {attr='pmoired.__version__'}
+
+[project]
+name = "simbinary"
+dynamic = ["version"]
+readme = {file="README.md", content-type="text/markdown"}
+license = {file="LICENCE.txt"}
+description = "Simulation of Gaia astrometry for binary systems"
+authors = [{ name = "Katia Sivkova", email = "ekaterina.sivkova@obspm.fr"}]
+dependencies = [
+	"kepmodel",
+	"kepler"]
+classifiers = [
+	"License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+	"Topic :: Scientific/Engineering :: Astronomy"
+	]
