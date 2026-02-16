@@ -17,7 +17,7 @@ description = "Simulation of Gaia astrometry for binary systems"
 authors = [{ name = "Katia Sivkova", email = "ekaterina.sivkova@obspm.fr"}]
 dependencies = [
 	"kepmodel",
-	"kepler"]
+	"kepler.py"]
 classifiers = [
 	"License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
 	"Topic :: Scientific/Engineering :: Astronomy"
