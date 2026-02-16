@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 include = ["simbinary"]
 
 [tool.setuptools.dynamic]
-version = {attr='pmoired.__version__'}
+version = {attr='simbinary.__version__'}
 
 [project]
 name = "simbinary"
