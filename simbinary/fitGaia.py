@@ -6,6 +6,21 @@ Created on Mon Feb 16 16:00:51 2026
 @author: esivkova
 """
 
+
+import matplotlib.pyplot as plt
+from astropy.time import Time
+import astropy.units as u
+import pandas as pd
+import numpy as np
+import kepler
+import os
+import spleaf
+import copy
+import xml.etree.ElementTree as ET
+from kepmodel.astro import AstroModel as AstrometricModel
+from scipy.optimize import least_squares
+from matplotlib.gridspec import GridSpec
+
 class fitGaia:
     def __init__(self, object_name, DataRelease = 4):
         #self.object_name
