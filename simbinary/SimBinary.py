@@ -428,19 +428,21 @@ class SimBinary:
         return puls, r1, r2, r1_nps, r2_nps
 
     def orbit(self, theta, times): # orbit model
+        
+        to_rad = (u.deg).to(u.rad)
     
         P = theta['P']
         a = theta['a']
         e = theta['e']
-        i = theta['i']
-        Omega = theta['Omega']
-        omega = theta['w']
+        i = theta['i']*to_rad
+        Omega = theta['Omega']*to_rad
+        omega = theta['w']*to_rad
         T = theta['T0']
 
         M = 2*np.pi/P*(times-T)
         E, cosE, sinE = kepler.kepler(M, e)
         
-        nu = 2*np.arctan2((1+e)**0.5*np.sin(E/2),(1-e)**0.5*np.cos(E/2))*u.rad
+        nu = 2*np.arctan2((1+e)**0.5*np.sin(E/2),(1-e)**0.5*np.cos(E/2))
         r = a*(1-e**2)/(1+e*np.cos(nu)) 
         
         delt_ra = r*(np.sin(Omega)*np.cos(omega+nu) + np.cos(i)*np.cos(Omega)*np.sin(omega+nu)) 
@@ -459,21 +461,21 @@ class SimBinary:
             ang1 = 0
             ang2 = 180
             
-        params1 = {'a': self.ObjectParameters['a']*u.mas*q_comp, 
-                   'i': self.ObjectParameters['i']*u.deg, 
-                   'Omega': self.ObjectParameters['Omega']*u.deg, 
+        params1 = {'a': self.ObjectParameters['a']*q_comp, 
+                   'i': self.ObjectParameters['i'], 
+                   'Omega': self.ObjectParameters['Omega'], 
                    'e':self.ObjectParameters['e'],
-                   'w':(self.ObjectParameters['w']+ang1)*u.deg, 
+                   'w':(self.ObjectParameters['w']+ang1), 
                    'T0': ((self.ObjectParameters['T0']-self.Tref.jd)*u.day).value, 
-                   'P':self.ObjectParameters['P']*u.day}
+                   'P':self.ObjectParameters['P']}
         
-        params2 = {'a': self.ObjectParameters['a']*u.mas*1/(1+self.ObjectParameters['q']), 
-                   'i': self.ObjectParameters['i']*u.deg, 
-                   'Omega': self.ObjectParameters['Omega']*u.deg, 
+        params2 = {'a': self.ObjectParameters['a']*1/(1+self.ObjectParameters['q']), 
+                   'i': self.ObjectParameters['i'], 
+                   'Omega': self.ObjectParameters['Omega'], 
                    'e':self.ObjectParameters['e'],
-                   'w':(self.ObjectParameters['w']+ang2)*u.deg, 
+                   'w':(self.ObjectParameters['w']+ang2), 
                    'T0': ((self.ObjectParameters['T0']-self.Tref.jd)*u.day).value, 
-                   'P':self.ObjectParameters['P']*u.day}
+                   'P':self.ObjectParameters['P']}
         
         # convert pm to mas/day
         vra = self.ObjectPMRA/365.25
@@ -494,13 +496,13 @@ class SimBinary:
         if self.ObjectType != 'BH' or self.ObjectType == 'exoplanet':
             a_ph = (self.ObjectParameters['q']/(1+self.ObjectParameters['q'])*np.mean(fdata['r1']) -\
                     1/(1+self.ObjectParameters['q'])*np.mean(fdata['r2']))*self.ObjectParameters['a']
-            self.params_ph = {'a': a_ph*u.mas, 
-                       'i': self.ObjectParameters['i']*u.deg, 
-                       'Omega': self.ObjectParameters['Omega']*u.deg, 
+            self.params_ph = {'a': a_ph, 
+                       'i': self.ObjectParameters['i'], 
+                       'Omega': self.ObjectParameters['Omega'], 
                        'e':self.ObjectParameters['e'],
-                       'w':(self.ObjectParameters['w']+180)*u.deg, 
+                       'w':(self.ObjectParameters['w']+180), 
                        'T0': ((self.ObjectParameters['T0']-self.Tref.jd)*u.day).value, 
-                       'P':self.ObjectParameters['P']*u.day}
+                       'P':self.ObjectParameters['P']}
         else:
             self.params_ph = params1
             
