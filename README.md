@@ -27,7 +27,7 @@ pip install -e .
 
 A Jupyter notebook example is available in the `examples/` directory.
 
-![image](images/astrometry_gaia_cepheid_S Mus.png)
+![image](images/astrometry_gaia_cepheid_S_Mus.png)
 
 ## Requirements
 
