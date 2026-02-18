@@ -308,7 +308,8 @@ class SimBinary:
             self.has_pulsation = True
             
         elif self.ObjectType == 'binary':
-            f_main = 1
+            mag_main = - 2.5*np.log10(10**(-0.4*(self.ObjectGmag))-10**(-0.4*(self.ObjectParameters['Vcomp'])))
+            f_main = 10**(-0.4*(mag_main-self.ObjectGmag))
             f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
             fdata['r1'] = [f_main/(f_comp+f_main)] # main star
             fdata['r2'] = [f_comp/(f_comp+f_main)] # companion
@@ -336,27 +337,24 @@ class SimBinary:
         T0 = T0 - self.Tref.jd # converting T0 with a correct time reference
         T0 = T0 - Tplot
         print(Vmin, Vmax, Vcomp, Ppuls, T0)
-        f_max = 1 # reference flux at Cepheid maximum
         # minimal cepheid flux and companion flux relative to ref flux
         # F/Fref = 10**(-0.4*(m-mref))
-        f_min = 10**(-0.4*(Vmin-Vmax))
-        Vmean = np.mean([Vmax, Vmin])
+        Vmean = np.mean([Vmax, Vmin]) # reference flux 
         f_comp = 10**(-0.4*(Vcomp-Vmean))
         
         puls = (Vmax-Vmin)/2 *\
             np.cos(2*np.pi*(times - T0)/Ppuls) \
                 + (Vmax+Vmin)/2
         
-        f_ceph = (f_max-f_min)/2 *\
-            np.cos(2*np.pi*(times - T0)/Ppuls) \
-                + (f_max+f_min)/2 #cepheid flux modelisation
+        puls_ceph = - 2.5*np.log10(10**(-0.4*(Vmean))-10**(-0.4*(Vcomp)))
+        f_ceph = 10**(-0.4*(puls_ceph-Vmean))
         # flux fraction for each component        
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
         r2 = f_comp/(f_comp+f_ceph) # companion
         
         # binary system without the pulsating component, non-pulsating system (nps)
         # f_mean = np.mean([f_max, f_min])
-        f_mean = 10**(-0.4*(Vmean-Vmax))
+        f_mean = 10**(-0.4*(Vmean-Vmax))*np.ones(len(puls))
         # f_mean = np.mean(f_ceph)
         r1_nps = f_mean/(f_comp+f_mean) # cepheid
         r2_nps = f_comp/(f_comp+f_mean) # companion
@@ -402,20 +400,10 @@ class SimBinary:
         
         self.ObjectParameters['Ppuls'] = P
         
-        maxpuls = np.min(puls) # reference flux at Cepheid maximum
-        # minimal cepheid flux and companion flux relative to ref flux
-        # F/Fref = 10**(-0.4*(m-mref))
-        f_ceph = 10**(-0.4*(puls-maxpuls))
-        
-        # f_mean = np.mean(f_ceph) 
-        f_mean = 10**(-0.4*(np.mean(puls)-maxpuls))
-        
-        if 'Vcomp' in self.ObjectParameters:
-            f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-maxpuls))
-        elif 'fratio' in self.ObjectParameters:
-            f_comp = self.ObjectParameters['fratio']/100 * f_mean
-        else:
-            raise KeyError("Please add a flux ratio or the magnutude of the companion.")
+        puls_ceph = - 2.5*np.log10(10**(-0.4*(puls))-10**(-0.4*(self.ObjectParameters['Vcomp'])))
+        f_ceph = 10**(-0.4*(puls_ceph-self.ObjectGmag))
+        f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
+        f_mean = np.mean(f_ceph)*np.ones(len(puls))
         
         # flux fraction for each component  
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
