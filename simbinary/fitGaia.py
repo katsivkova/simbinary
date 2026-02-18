@@ -25,6 +25,7 @@ class fitGaia:
     def __init__(self, object_name, DataRelease = 4):
         #self.object_name
         self.object_name = object_name
+        self.DataRelease = DataRelease
         
         Trefs = {1:2015.0,
                  2:2015.5,
@@ -153,7 +154,7 @@ class fitGaia:
                    'plxerr_bs': plx2_err}
         
         if data_dir is not None:
-            np.savetxt(f"{data_dir}/{self.object_name}_data.txt", np.array(list(keplerian_parameters.items())), fmt="%s")
+            np.savetxt(f"{data_dir}/{self.object_name}_DR{str(self.DataRelease)}..txt", np.array(list(keplerian_parameters.items())), fmt="%s")
         
         # print(f"Best-fit parameter (Campbell elements)\nkep.0.P is the period in days, kep.0.as is the semimajor axis in milli-arcseconds\n")
         keplerian_model.show_param()
