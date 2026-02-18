@@ -1,7 +1,7 @@
 
 
-from .SimBinary import SimBinary
-from .fitGaia import fitGaia
+from .simgaia import SimBinary
+from .fitgaia import fitGaia
 
 __all__ = ["SimBinary", "fitGaia"]
 

@@ -1,0 +1,14 @@
+# Packaging
+*.egg-info/
+build/
+dist/
+.idea/
+backups/
+*gost/
+
+# Python
+*__pycache__/
+*.pyc
+
+# macOS
+*.DS_Store
