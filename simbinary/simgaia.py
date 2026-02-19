@@ -648,29 +648,31 @@ class SimBinary:
         ax1, ax2 = axs
         
         ax1.set_title('Orbit motion')
-        ax1.plot(dataOrb['ra1'], dataOrb['dec1'], label=label1, color = 'pink', lw = lw)
-        ax1.plot(dataOrb['ra2'], dataOrb['dec2'], label=label2, color = 'lightskyblue')
-        ax1.plot(dataOrb['ra_ph'], dataOrb['dec_ph'], label='Photocentre', color = 'black')
-        ax1.scatter(self.Data['ra1'], self.Data['dec1'], color = 'pink', zorder=2.5, s=5)
-        ax1.scatter(self.Data['ra2'], self.Data['dec2'], color = 'lightskyblue', zorder=2.5, s=5)
-        ax1.scatter(self.Data['ra_ph'], self.Data['dec_ph'], color = 'black', zorder=2.5, s=10)
+        ax1.plot(dataOrb['ra1'], dataOrb['dec1'], label=label1, color = 'pink', lw = lw, zorder=1)
+        ax1.plot(dataOrb['ra2'], dataOrb['dec2'], label=label2, color = 'lightskyblue', zorder=2)
+        ax1.plot(dataOrb['ra_ph'], dataOrb['dec_ph'], label='Photocentre', color = 'black', zorder=3)
+        ax1.scatter(self.Data['ra1'], self.Data['dec1'], color = 'pink', zorder=1, s=5)
+        ax1.scatter(self.Data['ra2'], self.Data['dec2'], color = 'lightskyblue', zorder=2, s=5)
+        ax1.scatter(self.Data['ra_ph'], self.Data['dec_ph'], color = 'black', zorder=3, s=10)
         ax1.xaxis.set_inverted(True)
         ax1.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
         ax1.set_ylabel(r'$\Delta \delta$ [mas]')
         ax1.legend()
         ax1.set_aspect('equal', adjustable='datalim')
         
-        # adding projected parallax motion for visualisation
-        ax2.set_title('On sky (orbit + proper + parallax motions)')
-        ax2.plot(dataSky['ra_ss_plx'], dataSky['dec_ss_plx'], 
-                    label='Single star model', color = 'red')
-        ax2.plot(dataSky['ra_bs_plx'], dataSky['dec_bs_plx'], 
-                    label='Photocentre of the system', color = 'black')
         
-        ax2.scatter(self.Data['ra_ss_plx'], self.Data['dec_ss_plx'], 
-                    color = 'red', zorder=2.5, s=5)
+        ra_shift, dec_shift = np.mean(dataSky['ra_bs_plx']), np.mean(dataSky['dec_bs_plx'])
+        
+        ax2.set_title('On sky (orbit + proper + parallax motions)')
+        ax2.plot(dataSky['ra_ss_plx']+ra_shift, dataSky['dec_ss_plx']+dec_shift, 
+                    label='Single star model', color = 'plum', zorder=1)
+        ax2.plot(dataSky['ra_bs_plx'], dataSky['dec_bs_plx'], 
+                    label='Photocentre of the system', color = 'black', zorder=2)
+        
+        ax2.scatter(self.Data['ra_ss_plx']+ra_shift, self.Data['dec_ss_plx']+dec_shift, 
+                    color = 'plum', zorder=1, s=5)
         ax2.scatter(self.Data['ra_bs_plx'], self.Data['dec_bs_plx'], 
-                    color = 'black', zorder=2.5, s=5)
+                    color = 'black', zorder=2, s=5)
         ax2.xaxis.set_inverted(True)
         ax2.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
         ax2.set_ylabel(r'$\Delta \delta$ [mas]')
@@ -736,7 +738,7 @@ class SimBinary:
         dataPuls = self.FluxRatio(timesPuls, Tplot = Tplot)
 
         ax1.set_title('Pulsation')
-        ax1.plot(timesPuls, dataPuls['puls'], color = 'pink', lw = 2)
+        ax1.plot(timesPuls, dataPuls['puls'], color = 'pink', lw = 3)
         ax1.set_xlabel('Time [day]')
         ax1.set_ylabel('Gmag [mag]')
         ax1.yaxis.set_inverted(True)
@@ -757,14 +759,14 @@ class SimBinary:
         y_poly = np.concatenate([dec_min, dec_max[::-1]])
         
         ax2.set_title('Orbit motion')
-        ax2.fill(x_poly, y_poly, alpha=0.2, color = 'black', label = 'VIM zone', lw=0)
-        ax2.plot(dataOrb['ra1'], dataOrb['dec1'], label=label1, color = 'pink')
-        ax2.plot(dataOrb['ra2'], dataOrb['dec2'], label=label2, color = 'lightskyblue')
-        ax2.plot(dataOrb['ra_ph_nps'], dataOrb['dec_ph_nps'], label='Mean photocentre', color = 'black')
+        ax2.fill(x_poly, y_poly, alpha=0.2, color = 'black', label = 'VIM zone', lw=0, zorder=2.5)
+        ax2.plot(dataOrb['ra1'], dataOrb['dec1'], label=label1, color = 'pink', zorder=1)
+        ax2.plot(dataOrb['ra2'], dataOrb['dec2'], label=label2, color = 'lightskyblue', zorder=2)
+        ax2.plot(dataOrb['ra_ph_nps'], dataOrb['dec_ph_nps'], label='Mean photocentre', color = 'black', zorder=3)
         
-        ax2.scatter(self.Data['ra1'], self.Data['dec1'], color = 'pink', zorder=2.5, s=5)
-        ax2.scatter(self.Data['ra2'], self.Data['dec2'], color = 'lightskyblue', zorder=2.5, s=5)
-        ax2.scatter(self.Data['ra_ph'], self.Data['dec_ph'], color = 'black', zorder=2.5, s=5)
+        ax2.scatter(self.Data['ra1'], self.Data['dec1'], color = 'pink', zorder=1, s=5)
+        ax2.scatter(self.Data['ra2'], self.Data['dec2'], color = 'lightskyblue', zorder=2, s=5)
+        ax2.scatter(self.Data['ra_ph'], self.Data['dec_ph'], color = 'black', zorder=3, s=5)
         
         ax2.xaxis.set_inverted(True)
         ax2.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
@@ -777,20 +779,22 @@ class SimBinary:
         timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
         dataSky = self.SimPlot(timesSky)
         
+        ra_shift, dec_shift = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
+        
         ax3.set_title('On sky (orbit + proper + parallax motions)')
-        ax3.plot(dataSky['ra_ss_plx'], dataSky['dec_ss_plx'], 
-                    label='Single star model', color = 'red')
+        ax3.plot(dataSky['ra_ss_plx']+ra_shift, dataSky['dec_ss_plx']+dec_shift, 
+                    label='Single star model', color = 'plum', zorder=1)
         ax3.plot(dataSky['ra_nps_plx'], dataSky['dec_nps_plx'], 
-                 label='Binary system', color='orange')
+                 label='Binary system', color='darkviolet', zorder=2, lw=2)
         # ax3.plot(dataSky['ra_bs_plx'], dataSky['dec_bs_plx'], 
                     # label='Photocentre of the system', color = 'black')
         
-        ax3.scatter(self.Data['ra_ss_plx'], self.Data['dec_ss_plx'], 
-                    color = 'red', zorder=2.5, s=5)
+        ax3.scatter(self.Data['ra_ss_plx']+ra_shift, self.Data['dec_ss_plx']+dec_shift, 
+                    color = 'plum', zorder=1, s=5)
         ax3.scatter(self.Data['ra_nps_plx'], self.Data['dec_nps_plx'], 
-                 color='orange', zorder=2.5, s=5)
+                 color='darkviolet', zorder=2, s=5)
         ax3.scatter(self.Data['ra_bs_plx'], self.Data['dec_bs_plx'], 
-                    color = 'black', zorder=2.5, s=5, label = 'VIM')
+                    color = 'black', zorder=3, s=5, label = 'VIM')
         
         ax3.xaxis.set_inverted(True)
         ax3.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
