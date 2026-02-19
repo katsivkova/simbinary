@@ -61,7 +61,7 @@ class SimBinary:
         
         self.PrintInfo = True
         
-        if self.ObjectPMDEC is None and self.DataRelease>=3: #add PMRA condition
+        if self.ObjectPMDEC is None and self.ObjectPMDEC is None: #add PMRA condition
             print('Applying correction for DR3 proper motion...')
             
             self.LimitGost(gostdata, DR=3)
@@ -115,7 +115,7 @@ class SimBinary:
              'w':      {'required': True, 'type': (float, int, np.floating), 'range': [0, 360]},
              'T0':     {'required': True, 'type': (float, int, np.floating)},
              'q':      {'required': True, 'type': (float, int, np.floating), 'range': [0, 10e3]},
-             'pll':    {'required': True, 'type': (float, int, np.floating), 'range': [0, 10e3]},
+             'plx':    {'required': True, 'type': (float, int, np.floating), 'range': [0, 10e3]},
              'vra':    {'required': False,'type': (float, int, np.floating)},
              'vdec':   {'required': False,'type': (float, int, np.floating)},
              'Ppuls':  {'required': False,'type': (float, int, np.floating), 'range': [0, 10e6]},
@@ -468,7 +468,7 @@ class SimBinary:
         # convert pm to mas/day
         vra = self.ObjectPMRA/365.25
         vdec = self.ObjectPMDEC/365.25
-        plx = self.ObjectParameters['pll']
+        plx = self.ObjectParameters['plx']
         
         data = pd.DataFrame(columns=['ra1', 'dec1', 'ra2', 'dec2', 
                                      'ra_ph', 'dec_ph', 'ra_bs', 'dec_bs',
@@ -545,16 +545,16 @@ class SimBinary:
         
         self.w_bs = (self.dec0 + data['dec_bs'])*np.cos(self.scanAngleRAD) \
             + (self.ra0 + data['ra_bs'])*np.sin(self.scanAngleRAD) \
-                + self.ObjectParameters['pll']*self.prlFactorAL
+                + self.ObjectParameters['plx']*self.prlFactorAL
 
         self.w_ss = (self.dec0 + data['dec_ss'])*np.cos(self.scanAngleRAD) \
             + (self.ra0 + data['ra_ss'])*np.sin(self.scanAngleRAD) \
-                + self.ObjectParameters['pll']*self.prlFactorAL
+                + self.ObjectParameters['plx']*self.prlFactorAL
         
         if self.has_pulsation:
             self.w_nps = (self.dec0 + data['dec_nps'])*np.cos(self.scanAngleRAD) \
                 + (self.ra0 + data['ra_nps'])*np.sin(self.scanAngleRAD) \
-                    + self.ObjectParameters['pll']*self.prlFactorAL
+                    + self.ObjectParameters['plx']*self.prlFactorAL
         
         return self.w_bs
     

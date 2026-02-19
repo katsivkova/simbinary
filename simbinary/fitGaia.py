@@ -100,6 +100,10 @@ class fitGaia:
         params = single_star_model.get_param_error()
         plx1 = params[0][2]
         plx1_err = params[1][2]
+        pmra1 = params[0][3]
+        pmra1_err = params[1][3]
+        pmdec1 = params[0][4]
+        pmdec1_err = params[1][4]
         
         model = copy.deepcopy(single_star_model)
 
@@ -139,6 +143,11 @@ class fitGaia:
             
         plx2 = params[0][2]
         plx2_err = params[1][2]
+        pmra2 = params[0][3]
+        pmra2_err = params[1][3]
+        pmdec2 = params[0][4]
+        pmdec2_err = params[1][4]
+        
 
         
         keplerian_parameters = {'a': keplerian_parameters['as'], 
@@ -150,8 +159,16 @@ class fitGaia:
                    'P':keplerian_parameters['P'],
                    'plx_ss': plx1,
                    'plxerr_ss': plx1_err,
+                   'pmra_ss': pmra1,
+                   'pmraerr_ss': pmra1_err,
+                   'pmdec_ss': pmdec1,
+                   'pmdecerr_ss': pmdec1_err,
                    'plx_bs': plx2,
-                   'plxerr_bs': plx2_err}
+                   'plxerr_bs': plx2_err,
+                   'pmra_bs': pmra2,
+                   'pmraerr_bs': pmra2_err,
+                   'pmdec_bs': pmdec2,
+                   'pmdecerr_bs': pmdec2_err}
         
         if data_dir is not None:
             np.savetxt(f"{data_dir}/{self.object_name}_DR{str(self.DataRelease)}.txt", np.array(list(keplerian_parameters.items())), fmt="%s")
