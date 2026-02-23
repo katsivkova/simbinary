@@ -660,18 +660,18 @@ class SimBinary:
         ax1.legend()
         ax1.set_aspect('equal', adjustable='datalim')
         
-        
-        ra_shift, dec_shift = np.mean(dataSky['ra_bs_plx']), np.mean(dataSky['dec_bs_plx'])
+        ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
+        ra_shift2, dec_shift2 = np.mean(dataSky['ra_bs_plx']), np.mean(dataSky['dec_bs_plx'])
         
         ax2.set_title('On sky (orbit + proper + parallax motions)')
-        ax2.plot(dataSky['ra_ss_plx']+ra_shift, dataSky['dec_ss_plx']+dec_shift, 
+        ax2.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
                     label='Single star model', color = 'plum', zorder=1)
-        ax2.plot(dataSky['ra_bs_plx'], dataSky['dec_bs_plx'], 
+        ax2.plot(dataSky['ra_bs_plx']-ra_shift2, dataSky['dec_bs_plx']-dec_shift2, 
                     label='Photocentre of the system', color = 'black', zorder=2)
         
-        ax2.scatter(self.Data['ra_ss_plx']+ra_shift, self.Data['dec_ss_plx']+dec_shift, 
+        ax2.scatter(self.Data['ra_ss_plx']-ra_shift1, self.Data['dec_ss_plx']-dec_shift1, 
                     color = 'plum', zorder=1, s=5)
-        ax2.scatter(self.Data['ra_bs_plx'], self.Data['dec_bs_plx'], 
+        ax2.scatter(self.Data['ra_bs_plx']-ra_shift2, self.Data['dec_bs_plx']-dec_shift2, 
                     color = 'black', zorder=2, s=5)
         ax2.xaxis.set_inverted(True)
         ax2.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
@@ -779,21 +779,22 @@ class SimBinary:
         timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
         dataSky = self.SimPlot(timesSky)
         
-        ra_shift, dec_shift = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
+        ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
+        ra_shift2, dec_shift2 = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
         
         ax3.set_title('On sky (orbit + proper + parallax motions)')
-        ax3.plot(dataSky['ra_ss_plx']+ra_shift, dataSky['dec_ss_plx']+dec_shift, 
+        ax3.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
                     label='Single star model', color = 'plum', zorder=1)
-        ax3.plot(dataSky['ra_nps_plx'], dataSky['dec_nps_plx'], 
+        ax3.plot(dataSky['ra_nps_plx']-ra_shift2, dataSky['dec_nps_plx']-dec_shift2, 
                  label='Binary system', color='darkviolet', zorder=2, lw=2)
         # ax3.plot(dataSky['ra_bs_plx'], dataSky['dec_bs_plx'], 
                     # label='Photocentre of the system', color = 'black')
         
-        ax3.scatter(self.Data['ra_ss_plx']+ra_shift, self.Data['dec_ss_plx']+dec_shift, 
+        ax3.scatter(self.Data['ra_ss_plx']-ra_shift1, self.Data['dec_ss_plx']-dec_shift1, 
                     color = 'plum', zorder=1, s=5)
-        ax3.scatter(self.Data['ra_nps_plx'], self.Data['dec_nps_plx'], 
+        ax3.scatter(self.Data['ra_nps_plx']-ra_shift2, self.Data['dec_nps_plx']-dec_shift2, 
                  color='darkviolet', zorder=2, s=5)
-        ax3.scatter(self.Data['ra_bs_plx'], self.Data['dec_bs_plx'], 
+        ax3.scatter(self.Data['ra_bs_plx']-ra_shift2, self.Data['dec_bs_plx']-dec_shift2, 
                     color = 'black', zorder=3, s=5, label = 'VIM')
         
         ax3.xaxis.set_inverted(True)
