@@ -25,7 +25,7 @@ from matplotlib.gridspec import GridSpec
 
 
 class SimBinary:
-    def __init__(self, ObjectParameters, DataRelease = 4, SaveGost = True, GaiaPuls = True):
+    def __init__(self, ObjectParameters, DataRelease = 4, SaveGost = True, GaiaPuls = True, phot_array={'ra':0, 'dec': 0}):
         
         # filtering nans
         ObjectParameters = {k: ObjectParameters[k] for k in ObjectParameters\
@@ -39,6 +39,7 @@ class SimBinary:
         self.DataRelease = DataRelease
         self.SaveGost = SaveGost
         self.GaiaPuls = GaiaPuls
+        self.phot_array = phot_array
         
         Trefs = {1:2015.0,
                  2:2015.5,
@@ -76,13 +77,20 @@ class SimBinary:
                 self.reltimes*np.sin(self.scanAngleRAD),        # pmra
                 np.cos(self.scanAngleRAD),                # delta0
                 self.reltimes*np.cos(self.scanAngleRAD),        # pmdec
-                self.prlFactorAL                          # parallax
+                self.plxFactorAL                          # parallax
                 ]).T
-            werr = np.array(len(w_bs)*[0.02])
+            werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
             Cinv = np.diag(1/werr**2)
             p_fit = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
             _, pmra, _, pmdec, _ = p_fit
+            
+            F = mA.T @ Cinv @ mA
+            Cov_p = np.linalg.inv(F)
+            errors = np.sqrt(np.diag(Cov_p))
+            _, pmra_err, _, pmdec_err, _ = errors
+            
             print('Vector:', pmra*365.25, pmdec*365.25)
+            print(f'Correction: {pmra*365.25}\u00B1{pmra_err} {pmdec*365.25}\u00B1{pmdec_err}')
             self.ObjectPMRA = self.ObjectPMRA_DR3cat - pmra*365.25
             self.ObjectPMDEC = self.ObjectPMDEC_DR3cat - pmdec*365.25
             print(f'Proper motion corrected to: {self.ObjectPMRA} and {self.ObjectPMDEC} mas')
@@ -123,6 +131,7 @@ class SimBinary:
              'Vmax':   {'required': False,'type': (float, int, np.floating)},
              'Vmin':   {'required': False,'type': (float, int, np.floating)},
              'Vmain':  {'required': False,'type': (float, int, np.floating)},
+             'Vtot':   {'required': False,'type': (float, int, np.floating)},
              'Vcomp':  {'required': False,'type': (float, int, np.floating)},
              'fratio': {'required': False,'type': (float, int, np.floating)},
              'ra0':    {'required': False,'type': (float, int, np.floating)},
@@ -151,6 +160,10 @@ class SimBinary:
                     if value not in rule['selection']:
                         raise ValueError(f"The object type '{value}' doesn\'t \
                                          correspond to the supported ones: {rule['selection']}")
+    def errALCCD(self, G):
+        G_vals =    [ 4,    5,   6,     7,   8.2,  8.4, 10,    11,    12,  13,    14,   15,   16,   17,   18,   19,  20]
+        sigma_wal = [0.4, 0.35, 0.15, 0.17, 0.23, 0.13,0.13, 0.135, 0.125, 0.13, 0.15, 0.23, 0.36, 0.63, 1.05, 2.05, 4.1]
+        return np.interp(G, G_vals, sigma_wal)
     
     def querySimbadGaia(self):
         self.ObjectRA = None
@@ -171,8 +184,8 @@ class SimBinary:
             self.ObjectPMRA = self.ObjectParameters['pmra']
             self.ObjectPMDEC = self.ObjectParameters['pmdec']
         
-        if 'Vmain' in self.ObjectParameters:
-            self.ObjectGmag = self.ObjectParameters['Vmain']
+        if 'Vtot' in self.ObjectParameters:
+            self.ObjectGmag = self.ObjectParameters['Vtot']
         
         if self.id3 is None:
             Simbad.add_votable_fields('ids')
@@ -211,7 +224,7 @@ class SimBinary:
                 self.ObjectPMDEC_DR3cat = object_data['pmdec'].data[0]
                 print('Proper motion RA/DEC added with Gaia DR3')
             if self.ObjectGmag is None:
-                self.ObjectGmag = object_data['phot_g_mean_mag']
+                self.ObjectGmag = object_data['phot_g_mean_mag'].data[0]
                 print('Gmag added with Gaia DR3')
             
     def LoadGost(self):
@@ -243,8 +256,8 @@ class SimBinary:
                            for t in gostdata['ObservationalTimeBarycentre']])
         
         self.scanAngleRAD = gostdata['scanAngle']
-        self.prlFactorAL = gostdata['parallaxFactorAL']
-        self.prlFactorAC = gostdata['parallaxFactorAC']
+        self.plxFactorAL = gostdata['parallaxFactorAL']
+        self.plxFactorAC = gostdata['parallaxFactorAC']
         
         self.scanAngleDEG = np.rad2deg(self.scanAngleRAD)
         self.reltimes = (self.times - self.Tref).to(u.day).value
@@ -285,23 +298,25 @@ class SimBinary:
         fdata = pd.DataFrame(columns=['r1', 'r2'])
         
         if self.ObjectType == 'cepheid' and self.GaiaPuls:
-            puls, r1, r2, r1_nps, r2_nps = self.addPulsationGaia(times, Tplot)
+            puls, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsationGaia(times, Tplot)
             fdata['puls'] = puls
             fdata['r1'] = r1
             fdata['r2'] = r2
             fdata['r1_nps'] = r1_nps
             fdata['r2_nps'] = r2_nps
+            fdata['f_tot'] = f_tot
             self.has_pulsation = True
             
         elif self.ObjectType == 'cepheid':
             required = ['Vmin', 'Vmax', 'Vcomp', 'Ppuls', 'T0puls']
             if all(key in self.ObjectParameters for key in required):
-                puls, r1, r2, r1_nps, r2_nps = self.addPulsation(times, Tplot)
+                puls, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsation(times, Tplot)
                 fdata['puls'] = puls
                 fdata['r1'] = r1
                 fdata['r2'] = r2
                 fdata['r1_nps'] = r1_nps
                 fdata['r2_nps'] = r2_nps
+                fdata['f_tot'] = f_tot
             else:
                 raise KeyError("Please, provide the next parameters to \
                                approximate Cepheid pulsation: Vmin, Vmax, Vcomp, Ppuls, T0puls")
@@ -309,8 +324,10 @@ class SimBinary:
             
         elif self.ObjectType == 'binary':
             mag_main = - 2.5*np.log10(10**(-0.4*(self.ObjectGmag))-10**(-0.4*(self.ObjectParameters['Vcomp'])))
+            # mag_main = self.ObjectParameters['Vmain']
             f_main = 10**(-0.4*(mag_main-self.ObjectGmag))
             f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
+            
             fdata['r1'] = [f_main/(f_comp+f_main)] # main star
             fdata['r2'] = [f_comp/(f_comp+f_main)] # companion
             
@@ -352,6 +369,8 @@ class SimBinary:
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
         r2 = f_comp/(f_comp+f_ceph) # companion
         
+        f_tot = f_ceph+f_comp
+        
         # binary system without the pulsating component, non-pulsating system (nps)
         # f_mean = np.mean([f_max, f_min])
         f_mean = 10**(-0.4*(Vmean-Vmax))*np.ones(len(puls))
@@ -359,7 +378,7 @@ class SimBinary:
         r1_nps = f_mean/(f_comp+f_mean) # cepheid
         r2_nps = f_comp/(f_comp+f_mean) # companion
         
-        return puls, r1, r2, r1_nps, r2_nps
+        return puls, r1, r2, r1_nps, r2_nps, f_tot
     
     def addPulsationGaia(self, times, Tplot):
         
@@ -405,6 +424,8 @@ class SimBinary:
         f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
         f_mean = np.mean(f_ceph)*np.ones(len(puls))
         
+        f_tot = f_ceph+f_comp
+        
         # flux fraction for each component  
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
         r2 = f_comp/(f_comp+f_ceph) # companion
@@ -413,7 +434,7 @@ class SimBinary:
         r1_nps = f_mean/(f_comp+f_mean) # cepheid
         r2_nps = f_comp/(f_comp+f_mean) # companion
 
-        return puls, r1, r2, r1_nps, r2_nps
+        return puls, r1, r2, r1_nps, r2_nps, f_tot
 
     def orbit(self, theta, times): # orbit model
         
@@ -480,6 +501,8 @@ class SimBinary:
         data['ra1'], data['dec1'] = self.orbit(params1, times)
         data['ra2'], data['dec2'] = self.orbit(params2, times)
         
+        data['ra1'], data['dec1'] = data['ra1'] + self.phot_array['ra'], data['dec1'] + self.phot_array['dec']
+        
         
         if self.ObjectType != 'BH' or self.ObjectType == 'exoplanet':
             a_ph = (self.ObjectParameters['q']/(1+self.ObjectParameters['q'])*np.mean(fdata['r1']) -\
@@ -537,24 +560,24 @@ class SimBinary:
         fdata = self.FluxRatio(self.reltimes)
         
         # projecting parallax factors to ra, dec
-        factra = -self.prlFactorAL*np.sin(self.scanAngleRAD)+self.prlFactorAC*np.cos(self.scanAngleRAD)
-        factdec = self.prlFactorAL*np.cos(self.scanAngleRAD)+self.prlFactorAC*np.sin(self.scanAngleRAD)
+        factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
+        factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
         
         data = self.SimGaia(self.reltimes, fdata, factra, factdec)
         self.Data = data
         
         self.w_bs = (self.dec0 + data['dec_bs'])*np.cos(self.scanAngleRAD) \
             + (self.ra0 + data['ra_bs'])*np.sin(self.scanAngleRAD) \
-                + self.ObjectParameters['plx']*self.prlFactorAL
+                + self.ObjectParameters['plx']*self.plxFactorAL
 
         self.w_ss = (self.dec0 + data['dec_ss'])*np.cos(self.scanAngleRAD) \
             + (self.ra0 + data['ra_ss'])*np.sin(self.scanAngleRAD) \
-                + self.ObjectParameters['plx']*self.prlFactorAL
+                + self.ObjectParameters['plx']*self.plxFactorAL
         
         if self.has_pulsation:
             self.w_nps = (self.dec0 + data['dec_nps'])*np.cos(self.scanAngleRAD) \
                 + (self.ra0 + data['ra_nps'])*np.sin(self.scanAngleRAD) \
-                    + self.ObjectParameters['plx']*self.prlFactorAL
+                    + self.ObjectParameters['plx']*self.plxFactorAL
         
         return self.w_bs
     
@@ -579,8 +602,8 @@ class SimBinary:
         
         fdata = self.FluxRatio(times)
         
-        factra = -self.prlFactorAL*np.sin(self.scanAngleRAD)+self.prlFactorAC*np.cos(self.scanAngleRAD)
-        factdec = self.prlFactorAL*np.cos(self.scanAngleRAD)+self.prlFactorAC*np.sin(self.scanAngleRAD)
+        factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
+        factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
         
         factors = np.array([factra, factdec])
 
@@ -603,8 +626,8 @@ class SimBinary:
         sim_astrometry['ccd_id'] = 1 # because we simulate only one ccd
         sim_astrometry['obs_time_tcb'] = self.timesjd
         sim_astrometry['centroid_pos_al'] = self.w_bs
-        sim_astrometry['centroid_pos_error_al'] = 0.02 # au pif
-        sim_astrometry['parallax_factor_al'] = self.prlFactorAL
+        sim_astrometry['centroid_pos_error_al'] = self.errALCCD(self.ObjectGmag)
+        sim_astrometry['parallax_factor_al'] = self.plxFactorAL
         sim_astrometry['scan_pos_angle'] = self.scanAngleDEG # BH3 notebook is made for degrees
         sim_astrometry['outlier_flag'] = 0
         
@@ -643,7 +666,7 @@ class SimBinary:
             raise KeyError(f"Unknown type {self.ObjectType}")
             
         fig, axs = plt.subplots(1,2, figsize=(14, 7), constrained_layout=True)
-        fig.suptitle(self.ObjectName, fontsize=16)
+        fig.suptitle(self.ObjectName)
         
         ax1, ax2 = axs
         
@@ -663,7 +686,7 @@ class SimBinary:
         ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
         ra_shift2, dec_shift2 = np.mean(dataSky['ra_bs_plx']), np.mean(dataSky['dec_bs_plx'])
         
-        ax2.set_title('On sky (orbit + proper + parallax motions)')
+        ax2.set_title('On-sky (orbit + proper + parallax motions)')
         ax2.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
                     label='Single star model', color = 'plum', zorder=1)
         ax2.plot(dataSky['ra_bs_plx']-ra_shift2, dataSky['dec_bs_plx']-dec_shift2, 
@@ -712,6 +735,8 @@ class SimBinary:
         if plot_dir is not None:
             fig.savefig(plot_dir+f'astrometry_gaia_{self.ObjectName}_DR{str(self.DataRelease)}.png', 
                         dpi=300, bbox_inches="tight")
+            
+        return axs
         
     def PlotCepheid(self, plot_dir= None, Npoints=500):
         if not self.has_pulsation:
@@ -719,7 +744,7 @@ class SimBinary:
         label1 = 'Cepheid'
         label2 = 'Companion'
         fig = plt.figure(constrained_layout=True, figsize=(14, 7))
-        fig.suptitle(self.ObjectName, fontsize=16)
+        fig.suptitle(self.ObjectName)
         gs = GridSpec(2, 2, figure=fig, width_ratios=[2, 3])
         
         ax1 = fig.add_subplot(gs[0, 0])
@@ -782,7 +807,7 @@ class SimBinary:
         ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
         ra_shift2, dec_shift2 = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
         
-        ax3.set_title('On sky (orbit + proper + parallax motions)')
+        ax3.set_title('On-sky (orbit + proper + parallax motions)')
         ax3.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
                     label='Single star model', color = 'plum', zorder=1)
         ax3.plot(dataSky['ra_nps_plx']-ra_shift2, dataSky['dec_nps_plx']-dec_shift2, 
@@ -806,6 +831,7 @@ class SimBinary:
         if plot_dir is not None:
             fig.savefig(plot_dir+f'astrometry_gaia_cepheid_{self.ObjectName}_DR{str(self.DataRelease)}.png', 
                         dpi=300, bbox_inches="tight")
+        return [ax1, ax2, ax3]
     
     def fitSS(self, w_bs):
         mA = np.array([
@@ -813,9 +839,9 @@ class SimBinary:
             self.reltimes*np.sin(self.scanAngleRAD),        # pmra
             np.cos(self.scanAngleRAD),                # delta0
             self.reltimes*np.cos(self.scanAngleRAD),        # pmdec
-            self.prlFactorAL                          # parallax
+            self.plxFactorAL                          # parallax
             ]).T
-        werr = np.array(len(w_bs)*[0.02])
+        werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
         Cinv = np.diag(1/werr**2)
         p_fit = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
         w_fit = mA @ p_fit
@@ -823,8 +849,8 @@ class SimBinary:
     
     def PlotSSfit(self, plot_dir=None):
         
-        factra = -self.prlFactorAL*np.sin(self.scanAngleRAD)+self.prlFactorAC*np.cos(self.scanAngleRAD)
-        factdec = self.prlFactorAL*np.cos(self.scanAngleRAD)+self.prlFactorAC*np.sin(self.scanAngleRAD)
+        factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
+        factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
         
         p_fit, w_fit = self.fitSS(self.w_bs)
         print(p_fit)
@@ -832,22 +858,28 @@ class SimBinary:
         ra = r0 + pmr*self.reltimes + plx*factra
         dec = d0 + pmd*self.reltimes + plx*factdec
         
+        werr = np.array(len(w_fit)*[self.errALCCD(self.ObjectGmag)])
+        
+        ra_shift1, dec_shift1 = np.mean(self.Data['ra_bs_plx']), np.mean(self.Data['dec_bs_plx'])
+        ra_shift2, dec_shift2 = np.mean(ra), np.mean(dec)
+        
         fig, axs = plt.subplots(2,2, figsize=(14, 7), constrained_layout=True,
                                 height_ratios=[4, 1])
         ax1, ax2, ax3, ax4 = axs.ravel()
         fig.suptitle(self.ObjectName, fontsize=16)
         
         ax1.set_title('On sky (orbit + proper + parallax motions)')
-        ax1.plot(self.Data['ra_bs_plx'], self.Data['dec_bs_plx'], label = 'Data points', marker='.', color = 'coral')
-        ax1.plot(ra, dec, label = 'Fit', marker='.', color = 'black')
+        ax1.plot(self.Data['ra_bs_plx']-ra_shift1, self.Data['dec_bs_plx']-dec_shift1, label = 'Data points', marker='.', color = 'coral')
+        ax1.plot(ra-ra_shift2, dec-dec_shift2, label = 'Fit', marker='.', color = 'black')
         ax1.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
         ax1.set_ylabel(r'$\Delta \delta$ [mas]')
         ax1.xaxis.set_inverted(True)
         ax1.legend()
         
         ax3.set_title('Along scan positions')
-        ax2.scatter(self.reltimes, self.w_bs, label = 'Data points', color = 'coral', s=50)
-        ax2.scatter(self.reltimes, w_fit, label = 'Fit', color = 'black', s=20)
+        ax2.scatter(self.reltimes, self.w_bs, label = 'Data points', color = 'coral', s=50, zorder=1)
+        ax2.errorbar(self.reltimes, self.w_bs, yerr = werr, color = 'coral', ls='', zorder=1)
+        ax2.scatter(self.reltimes, w_fit, label = 'Fit', color = 'black', s=20, zorder=2)
         ax2.set_ylabel('AL positions [mas]', fontsize=14)
         ax2.legend()
         
@@ -862,3 +894,5 @@ class SimBinary:
         if plot_dir is not None:
             fig.savefig(plot_dir+f'fitSS_{self.ObjectName}_DR{str(self.DataRelease)}.png', 
                         dpi=300, bbox_inches="tight")
+            
+        return axs
