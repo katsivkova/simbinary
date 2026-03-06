@@ -58,6 +58,8 @@ class SimBinary:
             self.dec0 = ObjectParameters['dec0']
         
         self.querySimbadGaia()
+        if GaiaPuls:
+            self.queryGaiaCepheid()
         
         gostdata = self.LoadGost()
         
@@ -308,8 +310,9 @@ class SimBinary:
         fdata = pd.DataFrame(columns=['r1', 'r2'])
         
         if self.ObjectType == 'cepheid' and self.GaiaPuls:
-            puls, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsationGaia(times, Tplot)
+            puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsationGaia(times, Tplot)
             fdata['puls'] = puls
+            fdata['puls_ceph'] = puls_ceph
             fdata['r1'] = r1
             fdata['r2'] = r2
             fdata['r1_nps'] = r1_nps
@@ -320,8 +323,9 @@ class SimBinary:
         elif self.ObjectType == 'cepheid':
             required = ['Vmin', 'Vmax', 'Vcomp', 'Ppuls', 'T0puls']
             if all(key in self.ObjectParameters for key in required):
-                puls, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsation(times, Tplot)
+                puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsation(times, Tplot)
                 fdata['puls'] = puls
+                fdata['puls_ceph'] = puls_ceph
                 fdata['r1'] = r1
                 fdata['r2'] = r2
                 fdata['r1_nps'] = r1_nps
@@ -388,10 +392,9 @@ class SimBinary:
         r1_nps = f_mean/(f_comp+f_mean) # cepheid
         r2_nps = f_comp/(f_comp+f_mean) # companion
         
-        return puls, r1, r2, r1_nps, r2_nps, f_tot
+        return puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
     
-    def addPulsationGaia(self, times, Tplot):
-        
+    def queryGaiaCepheid(self):
         Gaia.ROW_LIMIT = 1  
         query = f"""
         SELECT *
@@ -413,16 +416,36 @@ class SimBinary:
         T0 = cepheid_data['reference_time_g'].data[0]
         T0 = T0 + Time(2016,format='decimalyear').jd # converting T0 to jd, 2016 DR3 ref
         T0 = T0 - self.Tref.jd # converting T0 with a correct time reference
-        T0 = T0 - Tplot
         P = cepheid_data['pf'].data[0]
         if np.ma.is_masked(P): 
             P = cepheid_data['p1_o'].data[0]
-            if self.PrintInfo:   
-                print('The p1_o period used')
+            print('The p1_o period used')
         if np.ma.is_masked(P): 
             P = 1/cepheid_data['fund_freq1'].data[0]
-            if self.PrintInfo:   
-                print('The 1/fund_freq period used')
+            print('The 1/fund_freq period used')
+                
+        self.PulsParams = pd.DataFrame(columns=['A0', 'N', 'As', 'phis', 'T0', 'P'])
+        
+        self.PulsParams['As'] = np.array(As)
+        self.PulsParams['phis'] = np.array(phis)
+        self.PulsParams['A0'] = np.array(A0)
+        self.PulsParams['N'] = np.array(N)
+        self.PulsParams['T0'] = np.array(T0)
+        self.PulsParams['P'] = np.array(P)
+        
+
+        
+    
+    def addPulsationGaia(self, times, Tplot):
+        
+        T0 = self.PulsParams['T0'][0] - Tplot
+        
+        A0 = self.PulsParams['A0'][0]
+        N = self.PulsParams['N'][0]
+        As = self.PulsParams['As'].values
+        phis = self.PulsParams['phis'].values
+        P = self.PulsParams['P'][0]
+        
         k = np.arange(1,N+1)
         arg = 2*np.pi*k[:, None]*(times - T0)/P + phis[:, None]
         puls = A0 + np.sum(As[:, None]*np.cos(arg), axis=0)
@@ -444,7 +467,7 @@ class SimBinary:
         r1_nps = f_mean/(f_comp+f_mean) # cepheid
         r2_nps = f_comp/(f_comp+f_mean) # companion
 
-        return puls, r1, r2, r1_nps, r2_nps, f_tot
+        return puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
 
     def orbit(self, theta, times): # orbit model
         
@@ -616,9 +639,10 @@ class SimBinary:
     def residuals(self, x, t, y):
         return ((self.orbitTI(x, t)-y)**2).ravel()
     
-    def SimPlot(self, times):
+    def SimPlot(self, times, fdata=None):
         
-        fdata = self.FluxRatio(times)
+        if fdata is None:
+            fdata = self.FluxRatio(times)
         
         factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
         factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
@@ -834,13 +858,45 @@ class SimBinary:
         ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
         ra_shift2, dec_shift2 = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
         
+        f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
+        f_ceph = 10**(-0.4*(dataPuls['puls_ceph']-self.ObjectGmag))
+        
+        fdataMin = pd.DataFrame(columns=['r1', 'r2'])
+        fdataMin['r1'] = [np.min(f_ceph)/(np.min(f_ceph)+f_comp)]
+        fdataMin['r2'] = [f_comp/(np.min(f_ceph)+f_comp)]
+        
+        fdataMax = pd.DataFrame(columns=['r1', 'r2'])
+        fdataMax['r1'] = [np.max(f_ceph)/(np.max(f_ceph)+f_comp)]
+        fdataMax['r2'] = [f_comp/(np.max(f_ceph)+f_comp)]
+        
+        self.has_pulsation = False
+        dataMin = self.SimPlot(timesSky, fdataMin)
+        dataMax = self.SimPlot(timesSky, fdataMax)
+        self.has_pulsation = True
+        
+        ra_min = dataMin['ra_bs_plx']-ra_shift2
+        ra_max = dataMax['ra_bs_plx']-ra_shift2
+        dec_min = dataMin['dec_bs_plx']-dec_shift2
+        dec_max = dataMax['dec_bs_plx']-dec_shift2
+        
         ax3.set_title('On-sky (orbit + proper + parallax motions)')
         ax3.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
                     label='Single star model', color = 'plum', zorder=1)
         ax3.plot(dataSky['ra_nps_plx']-ra_shift2, dataSky['dec_nps_plx']-dec_shift2, 
                  label='Binary system', color='darkviolet', zorder=2, lw=2)
-        # ax3.plot(dataSky['ra_bs_plx'], dataSky['dec_bs_plx'], 
-                    # label='Photocentre of the system', color = 'black')
+        # ax3.plot(dataSky['ra_bs_plx']-ra_shift2, dataSky['dec_bs_plx']-dec_shift2, 
+        #             label='Photocentre of the system', color = 'black', alpha =0.1)      
+        
+        ax3.fill(
+            [ra_min[0], ra_min[1], ra_max[1], ra_max[0]],
+            [dec_min[0], dec_min[1], dec_max[1], dec_max[0]],
+            color = '#D6D6D6', lw=1, zorder=0.5, label = 'VIM zone')
+        
+        for i in range(len(dataMin['dec_bs_plx'])-1):
+            ax3.fill(
+                [ra_min[i], ra_min[i+1], ra_max[i+1], ra_max[i]],
+                [dec_min[i], dec_min[i+1], dec_max[i+1], dec_max[i]],
+                color = '#D6D6D6', lw=1, zorder=0.5)
         
         ax3.scatter(self.Data['ra_ss_plx']-ra_shift1, self.Data['dec_ss_plx']-dec_shift1, 
                     color = 'plum', zorder=1, s=5)
