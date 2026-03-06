@@ -97,6 +97,8 @@ class fitGaia:
         # params_ss = single_star_model.get_param()
         single_star_model.show_param()
         
+        chi2r_ss = np.sqrt(single_star_model.chi2()/(len(gaia_astrometry['da_mas'])-5))
+        
         params = single_star_model.get_param_error()
         plx1 = params[0][2]
         plx1_err = params[1][2]
@@ -105,10 +107,14 @@ class fitGaia:
         pmdec1 = params[0][4]
         pmdec1_err = params[1][4]
         
+        print(chi2r_ss*plx1_err)
+        
+        print('chi2r ss', chi2r_ss)
+        
         model = copy.deepcopy(single_star_model)
 
         # Periodogram settings 
-        Pmin = 5
+        Pmin = 3
         Pmax = 10000
         nfreq = 10000
         nu0 = 2 * np.pi / Pmax
@@ -141,14 +147,16 @@ class fitGaia:
         for i, key in enumerate(keplerian_model._lin_name):
             linear_parameters[key] = keplerian_model._lin_par[i]
             
+        chi2r_bs = keplerian_model.chi2()/(len(gaia_astrometry['da_mas'])-12)
         plx2 = params[0][2]
-        plx2_err = params[1][2]
+        plx2_err = params[1][2] *chi2r_bs
         pmra2 = params[0][3]
-        pmra2_err = params[1][3]
+        pmra2_err = params[1][3] *chi2r_bs
         pmdec2 = params[0][4]
-        pmdec2_err = params[1][4]
+        pmdec2_err = params[1][4] *chi2r_bs
         
-
+        print(chi2r_bs*plx2_err)
+        print('chi2r bs', chi2r_bs)
         
         keplerian_parameters = {'a': keplerian_parameters['as'], 
                    'i': np.rad2deg(keplerian_parameters['i']), 

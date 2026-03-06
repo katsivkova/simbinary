@@ -25,7 +25,7 @@ from matplotlib.gridspec import GridSpec
 
 
 class SimBinary:
-    def __init__(self, ObjectParameters, DataRelease = 4, SaveGost = True, GaiaPuls = True, phot_array={'ra':0, 'dec': 0}):
+    def __init__(self, ObjectParameters, DataRelease = 4, SaveGost = True, errCCD = False, GaiaPuls = True, phot_array=None):
         
         # filtering nans
         ObjectParameters = {k: ObjectParameters[k] for k in ObjectParameters\
@@ -40,6 +40,7 @@ class SimBinary:
         self.SaveGost = SaveGost
         self.GaiaPuls = GaiaPuls
         self.phot_array = phot_array
+        self.errCCD = errCCD
         
         Trefs = {1:2015.0,
                  2:2015.5,
@@ -70,7 +71,7 @@ class SimBinary:
             # in work
             
             self.ObjectPMRA, self.ObjectPMDEC = 0, 0
-            w_bs = self.SimWAL()
+            w_bs = self.SimWAL(errCCD=False)
             
             mA = np.array([
                 np.sin(self.scanAngleRAD),                # alpha0
@@ -89,8 +90,11 @@ class SimBinary:
             errors = np.sqrt(np.diag(Cov_p))
             _, pmra_err, _, pmdec_err, _ = errors
             
-            print('Vector:', pmra*365.25, pmdec*365.25)
-            print(f'Correction: {pmra*365.25}\u00B1{pmra_err} {pmdec*365.25}\u00B1{pmdec_err}')
+            w_fit = mA @ p_fit
+            chi2r = np.sum(((w_bs-w_fit)/werr)**2)/(len(w_fit)-5)
+            
+            # print('Vector:', pmra*365.25, pmdec*365.25)
+            print(f'Correction: {pmra*365.25}\u00B1{pmra_err*365.25*chi2r**0.5} {pmdec*365.25}\u00B1{pmdec_err*365.25*chi2r**0.5}')
             self.ObjectPMRA = self.ObjectPMRA_DR3cat - pmra*365.25
             self.ObjectPMDEC = self.ObjectPMDEC_DR3cat - pmdec*365.25
             print(f'Proper motion corrected to: {self.ObjectPMRA} and {self.ObjectPMDEC} mas')
@@ -100,7 +104,11 @@ class SimBinary:
         
         self.LimitGost(gostdata, DR=self.DataRelease)
         
-        w_bs = self.SimWAL()
+        if self.errCCD:
+            length = len(self.reltimes)
+            self.errors = np.random.normal(0, self.errALCCD(self.ObjectGmag), length)
+        
+        w_bs = self.SimWAL(errCCD=errCCD)
                 
         
     def check_params(self, ObjectParameters, DataRelease):
@@ -161,6 +169,8 @@ class SimBinary:
                         raise ValueError(f"The object type '{value}' doesn\'t \
                                          correspond to the supported ones: {rule['selection']}")
     def errALCCD(self, G):
+        # adopted from gaiamock https://github.com/kareemelbadry/gaiamock/
+        # El-Badry et al. 2024, 2024OJAp....7E.100E
         G_vals =    [ 4,    5,   6,     7,   8.2,  8.4, 10,    11,    12,  13,    14,   15,   16,   17,   18,   19,  20]
         sigma_wal = [0.4, 0.35, 0.15, 0.17, 0.23, 0.13,0.13, 0.135, 0.125, 0.13, 0.15, 0.23, 0.36, 0.63, 1.05, 2.05, 4.1]
         return np.interp(G, G_vals, sigma_wal)
@@ -501,7 +511,12 @@ class SimBinary:
         data['ra1'], data['dec1'] = self.orbit(params1, times)
         data['ra2'], data['dec2'] = self.orbit(params2, times)
         
-        data['ra1'], data['dec1'] = data['ra1'] + self.phot_array['ra'], data['dec1'] + self.phot_array['dec']
+        if self.phot_array:
+            pert_ra, pert_dec = self.phot_array(times)
+        else:
+            pert_ra, pert_dec = 0, 0
+        
+        data['ra2'], data['dec2'] = data['ra2'] + pert_ra, data['dec2'] + pert_dec
         
         
         if self.ObjectType != 'BH' or self.ObjectType == 'exoplanet':
@@ -554,7 +569,7 @@ class SimBinary:
         
         return data
     
-    def SimWAL(self):
+    def SimWAL(self, errCCD):
         
         
         fdata = self.FluxRatio(self.reltimes)
@@ -579,6 +594,9 @@ class SimBinary:
                 + (self.ra0 + data['ra_nps'])*np.sin(self.scanAngleRAD) \
                     + self.ObjectParameters['plx']*self.plxFactorAL
         
+        if errCCD:
+            self.w_bs = self.w_bs + self.errors
+        
         return self.w_bs
     
     def orbitTI(self, x, t):
@@ -590,8 +608,8 @@ class SimBinary:
         X = cosE - e
         Y = np.sqrt(1-e**2)*sinE
         
-        delt_ra = A*X + F*Y
-        delt_dec = B*X + G*Y
+        delt_ra = B*X + G*Y
+        delt_dec = A*X + F*Y
 
         return np.array([delt_ra, delt_dec])
     
@@ -636,7 +654,8 @@ class SimBinary:
                                   sep=' ', header=False, index=False)
         return sim_astrometry
     
-    def Plot(self, plot_dir=None, Npoints=500, scan_axis=None, scan_length=1):
+    def Plot(self, plot_dir=None, Npoints=500, scan_axis=None, scan_length=None, errCCD=False):
+        print(scan_axis, scan_length, errCCD)
         
         Period = self.ObjectParameters['P']
         
@@ -702,17 +721,19 @@ class SimBinary:
         ax2.legend()
         ax2.set_aspect('equal', adjustable='datalim')
         
+        if scan_axis is None or scan_axis=='all' or scan_axis==[1,2]:
+            scan_axis=[True, True]
+        elif scan_axis==1:
+            scan_axis=[True, False]
+        elif scan_axis==2:
+            scan_axis=[False, True]
+        else:
+            raise ValueError(f"scan_axis can be 1, 2, [1,2], or 'all', currently {scan_axis}")
         
-        if scan_axis is not None or scan_length !=1:
-            if scan_axis is None or scan_axis=='all' or scan_axis==[1,2]:
-                scan_axis=[True, True]
-            elif scan_axis==1:
-                scan_axis=[True, False]
-            elif scan_axis==2:
-                scan_axis=[False, True]
-            else:
-                raise ValueError(f"scan_axis can be 1, 2, [1,2], or 'all', currently {scan_axis}")
-                
+        ra = np.array([self.Data['ra_ph'], self.Data['ra_bs_plx']-ra_shift2])
+        dec = np.array([self.Data['dec_ph'], self.Data['dec_bs_plx']-dec_shift2])
+        
+        if scan_length is not None:
             if isinstance(scan_length, list):
                 if len(scan_length) == 1:
                     scan_length=[scan_length[0], scan_length[0]]
@@ -722,15 +743,21 @@ class SimBinary:
                 scan_length=[scan_length, scan_length]
             scan_length = np.array(scan_length)
             
-                
-            ra = np.array([self.Data['ra_ph'], self.Data['ra_bs_plx']])
-            dec = np.array([self.Data['dec_ph'], self.Data['dec_bs_plx']])
-            
             for axi, ri, di, li in zip(axs[scan_axis], ra[scan_axis], dec[scan_axis], scan_length[scan_axis]):
                 for r1, d1, ai in zip(ri, di, self.scanAngleRAD):
                     dx = 0.5 * li * np.sin(ai)
                     dy = 0.5 * li * np.cos(ai)
                     axi.plot([r1 - dx, r1 + dx], [d1 - dy, d1 + dy], color='gray', lw=1, alpha=0.5)
+                    
+        if errCCD and not self.errCCD:
+            raise KeyError('To plot errors (errCCD=True), simulate it with SimBinary first.')
+        elif errCCD and self.errCCD:
+            
+            errx = self.errors * np.sin(self.scanAngleRAD)
+            erry = self.errors * np.cos(self.scanAngleRAD)
+            
+            for axi, ri, di in zip(axs[scan_axis], ra[scan_axis], dec[scan_axis]):
+                axi.scatter(ri+errx, di+erry, s = 20, color = 'gray', alpha=0.3, zorder=1.5)
             
         if plot_dir is not None:
             fig.savefig(plot_dir+f'astrometry_gaia_{self.ObjectName}_DR{str(self.DataRelease)}.png', 
@@ -740,7 +767,7 @@ class SimBinary:
         
     def PlotCepheid(self, plot_dir= None, Npoints=500):
         if not self.has_pulsation:
-            raise KeyError(f"This plot is only for VIM (cepheid or mira). The current type is{self.ObjectType}")
+            raise KeyError(f"This plot is only for VIM (cepheid or mira). The current type is {self.ObjectType}")
         label1 = 'Cepheid'
         label2 = 'Companion'
         fig = plt.figure(constrained_layout=True, figsize=(14, 7))
@@ -845,6 +872,21 @@ class SimBinary:
         Cinv = np.diag(1/werr**2)
         p_fit = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
         w_fit = mA @ p_fit
+        
+        chi2r = np.sum(((w_bs-w_fit)/werr)**2)/(len(w_fit)-5)
+        print('chi2r', np.round(chi2r, 3))
+        
+        F = mA.T @ Cinv @ mA
+        Cov_p = np.linalg.inv(F)
+        errors = np.sqrt(np.diag(Cov_p))
+        errors = errors * chi2r
+        
+        labels = ['a0', 'pmra', 'd0', 'pmdec', 'plx']
+        
+        for p, e, l in zip(p_fit, errors, labels):
+            
+            print(l, np.round(p,4), '\u00B1', np.round(e,4))
+        
         return p_fit, w_fit
     
     def PlotSSfit(self, plot_dir=None):
@@ -853,7 +895,6 @@ class SimBinary:
         factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
         
         p_fit, w_fit = self.fitSS(self.w_bs)
-        print(p_fit)
         r0, pmr, d0, pmd, plx = p_fit
         ra = r0 + pmr*self.reltimes + plx*factra
         dec = d0 + pmd*self.reltimes + plx*factdec
