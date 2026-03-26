@@ -176,7 +176,9 @@ class fitGaia:
                    'pmra_bs': pmra2,
                    'pmraerr_bs': pmra2_err,
                    'pmdec_bs': pmdec2,
-                   'pmdecerr_bs': pmdec2_err}
+                   'pmdecerr_bs': pmdec2_err,
+                   'chi2r_ss': chi2r_ss,
+                   'chi2r_bs': chi2r_bs}
         
         if data_dir is not None:
             np.savetxt(f"{data_dir}/{self.object_name}_DR{str(self.DataRelease)}.txt", np.array(list(keplerian_parameters.items())), fmt="%s")

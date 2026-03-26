@@ -95,7 +95,6 @@ class SimBinary:
             w_fit = mA @ p_fit
             chi2r = np.sum(((w_bs-w_fit)/werr)**2)/(len(w_fit)-5)
             
-            # print('Vector:', pmra*365.25, pmdec*365.25)
             print(f'Correction: {np.round(pmra*365.25, 3)}\u00B1{np.round(pmra_err*365.25*chi2r**0.5, 3)} {np.round(pmdec*365.25, 3)}\u00B1{np.round(pmdec_err*365.25*chi2r**0.5, 3)}')
             self.ObjectPMRA = self.ObjectPMRA_DR3cat - pmra*365.25
             self.ObjectPMDEC = self.ObjectPMDEC_DR3cat - pmdec*365.25
@@ -136,8 +135,8 @@ class SimBinary:
              'T0':     {'required': True, 'type': (float, int, np.floating)},
              'q':      {'required': True, 'type': (float, int, np.floating), 'range': [0, 10e3]},
              'plx':    {'required': True, 'type': (float, int, np.floating), 'range': [0, 10e3]},
-             'vra':    {'required': False,'type': (float, int, np.floating)},
-             'vdec':   {'required': False,'type': (float, int, np.floating)},
+             'pmra':   {'required': False,'type': (float, int, np.floating)},
+             'pmdec':  {'required': False,'type': (float, int, np.floating)},
              'Ppuls':  {'required': False,'type': (float, int, np.floating), 'range': [0, 10e6]},
              'T0puls': {'required': False,'type': (float, int, np.floating)},
              'Vmax':   {'required': False,'type': (float, int, np.floating)},
@@ -462,7 +461,6 @@ class SimBinary:
         f_mean = np.mean(f_ceph)*np.ones(len(puls))
         
         f_tot = f_ceph+f_comp
-        print(f_comp, np.min(f_tot), np.max(f_tot))
         
         # flux fraction for each component  
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
@@ -794,7 +792,7 @@ class SimBinary:
             fig.savefig(plot_dir+f'astrometry_gaia_{self.ObjectName}_DR{str(self.DataRelease)}.png', 
                         dpi=300, bbox_inches="tight", transparent=False)
             
-        return fig, axs
+        return axs
         
     def PlotCepheid(self, plot_dir= None, Npoints=500):
         if not self.has_pulsation:
