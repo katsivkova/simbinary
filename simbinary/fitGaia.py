@@ -107,7 +107,7 @@ class fitGaia:
         pmdec1 = params[0][4]
         pmdec1_err = params[1][4]
         
-        print(chi2r_ss*plx1_err)
+        # print(chi2r_ss*plx1_err)
         
         print('chi2r ss', chi2r_ss)
         
@@ -155,7 +155,7 @@ class fitGaia:
         pmdec2 = params[0][4]
         pmdec2_err = params[1][4] *chi2r_bs
         
-        print(chi2r_bs*plx2_err)
+        # print(chi2r_bs*plx2_err)
         print('chi2r bs', chi2r_bs)
         
         keplerian_parameters = {'a': keplerian_parameters['as'], 
