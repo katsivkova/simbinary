@@ -58,7 +58,7 @@ class SimBinary:
             self.dec0 = ObjectParameters['dec0']
         
         self.querySimbadGaia()
-        if GaiaPuls:
+        if GaiaPuls and self.ObjectType=='cepheid':
             self.queryGaiaCepheid()
         
         gostdata = self.LoadGost()
@@ -96,10 +96,12 @@ class SimBinary:
             chi2r = np.sum(((w_bs-w_fit)/werr)**2)/(len(w_fit)-5)
             
             # print('Vector:', pmra*365.25, pmdec*365.25)
-            print(f'Correction: {pmra*365.25}\u00B1{pmra_err*365.25*chi2r**0.5} {pmdec*365.25}\u00B1{pmdec_err*365.25*chi2r**0.5}')
+            print(f'Correction: {np.round(pmra*365.25, 3)}\u00B1{np.round(pmra_err*365.25*chi2r**0.5, 3)} {np.round(pmdec*365.25, 3)}\u00B1{np.round(pmdec_err*365.25*chi2r**0.5, 3)}')
             self.ObjectPMRA = self.ObjectPMRA_DR3cat - pmra*365.25
             self.ObjectPMDEC = self.ObjectPMDEC_DR3cat - pmdec*365.25
-            print(f'Proper motion corrected to: {self.ObjectPMRA} and {self.ObjectPMDEC} mas')
+            self.ObjectPMRA_err = self.ObjectPMRA_DR3cat_err + pmra_err*365.25*chi2r**0.5
+            self.ObjectPMDEC_err = self.ObjectPMDEC_DR3cat_err + pmdec_err*365.25*chi2r**0.5
+            print(f'Proper motion corrected to: {np.round(self.ObjectPMRA, 3)}\u00B1{np.round(self.ObjectPMRA_err,3)} and {np.round(self.ObjectPMDEC, 3)}\u00B1{np.round(self.ObjectPMDEC_err,3)} mas')
         elif self.ObjectPMDEC is None:
             self.ObjectPMRA=self.ObjectPMRA_DR3cat
             self.ObjectPMDEC=self.ObjectPMDEC_DR3cat
@@ -234,6 +236,8 @@ class SimBinary:
             if self.ObjectPMDEC is None:
                 self.ObjectPMRA_DR3cat = object_data['pmra'].data[0]
                 self.ObjectPMDEC_DR3cat = object_data['pmdec'].data[0]
+                self.ObjectPMRA_DR3cat_err = object_data['pmra_error'].data[0]
+                self.ObjectPMDEC_DR3cat_err = object_data['pmdec_error'].data[0]
                 print('Proper motion RA/DEC added with Gaia DR3')
             if self.ObjectGmag is None:
                 self.ObjectGmag = object_data['phot_g_mean_mag'].data[0]
@@ -377,7 +381,7 @@ class SimBinary:
             np.cos(2*np.pi*(times - T0)/Ppuls) \
                 + (Vmax+Vmin)/2
         
-        puls_ceph = - 2.5*np.log10(10**(-0.4*(Vmean))-10**(-0.4*(Vcomp)))
+        puls_ceph = - 2.5*np.log10(10**(-0.4*(puls))-10**(-0.4*(Vcomp)))
         f_ceph = 10**(-0.4*(puls_ceph-Vmean))
         # flux fraction for each component        
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
@@ -458,6 +462,7 @@ class SimBinary:
         f_mean = np.mean(f_ceph)*np.ones(len(puls))
         
         f_tot = f_ceph+f_comp
+        print(f_comp, np.min(f_tot), np.max(f_tot))
         
         # flux fraction for each component  
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
@@ -711,15 +716,17 @@ class SimBinary:
         fig, axs = plt.subplots(1,2, figsize=(14, 7), constrained_layout=True)
         fig.suptitle(self.ObjectName)
         
+        maincolor='black'
+        
         ax1, ax2 = axs
         
         ax1.set_title('Orbit motion')
         ax1.plot(dataOrb['ra1'], dataOrb['dec1'], label=label1, color = 'pink', lw = lw, zorder=1)
         ax1.plot(dataOrb['ra2'], dataOrb['dec2'], label=label2, color = 'lightskyblue', zorder=2)
-        ax1.plot(dataOrb['ra_ph'], dataOrb['dec_ph'], label='Photocentre', color = 'black', zorder=3)
+        ax1.plot(dataOrb['ra_ph'], dataOrb['dec_ph'], label='Photocentre', color = maincolor, zorder=3)
         ax1.scatter(self.Data['ra1'], self.Data['dec1'], color = 'pink', zorder=1, s=5)
         ax1.scatter(self.Data['ra2'], self.Data['dec2'], color = 'lightskyblue', zorder=2, s=5)
-        ax1.scatter(self.Data['ra_ph'], self.Data['dec_ph'], color = 'black', zorder=3, s=10)
+        ax1.scatter(self.Data['ra_ph'], self.Data['dec_ph'], color = maincolor, zorder=3, s=10)
         ax1.xaxis.set_inverted(True)
         ax1.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
         ax1.set_ylabel(r'$\Delta \delta$ [mas]')
@@ -731,14 +738,14 @@ class SimBinary:
         
         ax2.set_title('On-sky (orbit + proper + parallax motions)')
         ax2.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
-                    label='Single star model', color = 'plum', zorder=1)
+                    label='Single star model', color = 'blueviolet', zorder=1)
         ax2.plot(dataSky['ra_bs_plx']-ra_shift2, dataSky['dec_bs_plx']-dec_shift2, 
-                    label='Photocentre of the system', color = 'black', zorder=2)
+                    label='Photocentre of the system', color = maincolor, zorder=2)
         
         ax2.scatter(self.Data['ra_ss_plx']-ra_shift1, self.Data['dec_ss_plx']-dec_shift1, 
-                    color = 'plum', zorder=1, s=5)
+                    color = 'blueviolet', zorder=1, s=5)
         ax2.scatter(self.Data['ra_bs_plx']-ra_shift2, self.Data['dec_bs_plx']-dec_shift2, 
-                    color = 'black', zorder=2, s=5)
+                    color = maincolor, zorder=2, s=5)
         ax2.xaxis.set_inverted(True)
         ax2.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
         ax2.set_ylabel(r'$\Delta \delta$ [mas]')
@@ -785,9 +792,9 @@ class SimBinary:
             
         if plot_dir is not None:
             fig.savefig(plot_dir+f'astrometry_gaia_{self.ObjectName}_DR{str(self.DataRelease)}.png', 
-                        dpi=300, bbox_inches="tight")
+                        dpi=300, bbox_inches="tight", transparent=False)
             
-        return axs
+        return fig, axs
         
     def PlotCepheid(self, plot_dir= None, Npoints=500):
         if not self.has_pulsation:
@@ -798,9 +805,135 @@ class SimBinary:
         fig.suptitle(self.ObjectName)
         gs = GridSpec(2, 2, figure=fig, width_ratios=[2, 3])
         
+        maincolor='black'
+        
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[1, 0])
         ax3 = fig.add_subplot(gs[:, 1])
+        
+        # Pulsation
+        Ppuls = self.ObjectParameters['Ppuls']
+        
+        timesPuls = np.linspace(-Ppuls/2, Ppuls/2, 1000)
+        dataPuls = self.FluxRatio(timesPuls)
+        
+        Tplot = timesPuls[np.where(dataPuls['puls'] == np.min(dataPuls['puls']))]
+        
+        timesPuls = np.linspace(-Ppuls, Ppuls, Npoints)
+        dataPuls = self.FluxRatio(timesPuls, Tplot = Tplot)
+
+        ax1.set_title('Pulsation')
+        ax1.plot(timesPuls, dataPuls['puls'], color = 'pink', lw = 3)
+        ax1.set_xlabel('Time [day]')
+        ax1.set_ylabel('Gmag [mag]')
+        ax1.yaxis.set_inverted(True)
+        
+        # Orbit
+        
+        Period = self.ObjectParameters['P']
+        
+        timesOrb = np.linspace(-Period/2, Period/2, Npoints)
+        dataOrb = self.SimPlot(timesOrb)
+        
+        temp = self.params_ph
+        temp['a'] = self.a_ph_min
+        ra_min, dec_min = self.orbit(temp, timesOrb)
+        temp['a'] = self.a_ph_max
+        ra_max, dec_max = self.orbit(temp, timesOrb)
+        x_poly = np.concatenate([ra_min, ra_max[::-1]])
+        y_poly = np.concatenate([dec_min, dec_max[::-1]])
+        
+        ax2.set_title('Orbit motion')
+        ax2.fill(x_poly, y_poly, alpha=0.2, color = maincolor, label = 'VIM zone', lw=0, zorder=2.5)
+        ax2.plot(dataOrb['ra1'], dataOrb['dec1'], label=label1, color = 'pink', zorder=1)
+        ax2.plot(dataOrb['ra2'], dataOrb['dec2'], label=label2, color = 'lightskyblue', zorder=2)
+        ax2.plot(dataOrb['ra_ph_nps'], dataOrb['dec_ph_nps'], label='Mean photocentre', color = maincolor, zorder=3)
+        
+        ax2.scatter(self.Data['ra1'], self.Data['dec1'], color = 'pink', zorder=1, s=5)
+        ax2.scatter(self.Data['ra2'], self.Data['dec2'], color = 'lightskyblue', zorder=2, s=5)
+        ax2.scatter(self.Data['ra_ph'], self.Data['dec_ph'], color = maincolor, zorder=3, s=5)
+        
+        ax2.xaxis.set_inverted(True)
+        ax2.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
+        ax2.set_ylabel(r'$\Delta \delta$ [mas]')
+        ax2.set_aspect('equal', adjustable='datalim')
+        ax2.legend()
+        
+        # Sky
+        
+        timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
+        dataSky = self.SimPlot(timesSky)
+        
+        ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
+        ra_shift2, dec_shift2 = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
+        
+        f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
+        f_ceph = 10**(-0.4*(dataPuls['puls_ceph']-self.ObjectGmag))
+        
+        fdataMin = pd.DataFrame(columns=['r1', 'r2'])
+        fdataMin['r1'] = [np.min(f_ceph)/(np.min(f_ceph)+f_comp)]
+        fdataMin['r2'] = [f_comp/(np.min(f_ceph)+f_comp)]
+        
+        fdataMax = pd.DataFrame(columns=['r1', 'r2'])
+        fdataMax['r1'] = [np.max(f_ceph)/(np.max(f_ceph)+f_comp)]
+        fdataMax['r2'] = [f_comp/(np.max(f_ceph)+f_comp)]
+        
+        self.has_pulsation = False
+        dataMin = self.SimPlot(timesSky, fdataMin)
+        dataMax = self.SimPlot(timesSky, fdataMax)
+        self.has_pulsation = True
+        
+        ra_min = dataMin['ra_bs_plx']-ra_shift2
+        ra_max = dataMax['ra_bs_plx']-ra_shift2
+        dec_min = dataMin['dec_bs_plx']-dec_shift2
+        dec_max = dataMax['dec_bs_plx']-dec_shift2
+        
+        ax3.set_title('On-sky (orbit + proper + parallax motions)')
+        ax3.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
+                    label='Single star model', color = 'plum', zorder=1)
+        ax3.plot(dataSky['ra_nps_plx']-ra_shift2, dataSky['dec_nps_plx']-dec_shift2, 
+                 label='Binary system', color='darkviolet', zorder=2, lw=2)
+        # ax3.plot(dataSky['ra_bs_plx']-ra_shift2, dataSky['dec_bs_plx']-dec_shift2, 
+        #             label='Photocentre of the system', color = 'black', alpha =0.1)      
+        
+        ax3.fill(
+            [ra_min[0], ra_min[1], ra_max[1], ra_max[0]],
+            [dec_min[0], dec_min[1], dec_max[1], dec_max[0]],
+            color = '#D6D6D6', lw=1, zorder=0.5, label = 'VIM zone')
+        
+        for i in range(len(dataMin['dec_bs_plx'])-1):
+            ax3.fill(
+                [ra_min[i], ra_min[i+1], ra_max[i+1], ra_max[i]],
+                [dec_min[i], dec_min[i+1], dec_max[i+1], dec_max[i]],
+                color = '#D6D6D6', lw=1, zorder=0.5)
+        
+        ax3.scatter(self.Data['ra_ss_plx']-ra_shift1, self.Data['dec_ss_plx']-dec_shift1, 
+                    color = 'plum', zorder=1, s=5)
+        ax3.scatter(self.Data['ra_nps_plx']-ra_shift2, self.Data['dec_nps_plx']-dec_shift2, 
+                 color='darkviolet', zorder=2, s=5)
+        ax3.scatter(self.Data['ra_bs_plx']-ra_shift2, self.Data['dec_bs_plx']-dec_shift2, 
+                    color = maincolor, zorder=3, s=5, label = 'VIM')
+        
+        ax3.xaxis.set_inverted(True)
+        ax3.set_xlabel(r'$\Delta \alpha cos(\delta)$ [mas]')
+        ax3.set_ylabel(r'$\Delta \delta$ [mas]')
+        ax3.set_aspect('equal', adjustable='datalim')
+        ax3.legend()
+        
+        if plot_dir is not None:
+            fig.savefig(plot_dir+f'astrometry_gaia_cepheid_{self.ObjectName}_DR{str(self.DataRelease)}.png', 
+                        dpi=300, bbox_inches="tight")
+        return [ax1, ax2, ax3]
+    
+    def PlotCepheidRow(self, plot_dir= None, Npoints=500):
+        if not self.has_pulsation:
+            raise KeyError(f"This plot is only for VIM (cepheid or mira). The current type is {self.ObjectType}")
+        label1 = 'Cepheid'
+        label2 = 'Companion'
+        fig, axs = plt.subplots(1,3, figsize=(15, 5), constrained_layout=True)
+        fig.suptitle(self.ObjectName)
+        
+        ax1, ax2, ax3 = axs
         
         # Pulsation
         Ppuls = self.ObjectParameters['Ppuls']
