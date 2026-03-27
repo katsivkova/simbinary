@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 from kepmodel.astro import AstroModel as AstrometricModel
 from scipy.optimize import least_squares
 from matplotlib.gridspec import GridSpec
+from scipy.interpolate import CubicSpline
 
 
 class SimBinary:
@@ -94,7 +95,7 @@ class SimBinary:
         if self.ObjectPMDEC is None and self.ObjectPMDEC is None: #add PMRA condition
             print('Applying correction for DR3 proper motion...')
             
-            self.LimitGost(gostdata, perturbation, DR=3)
+            self.LimitGost(gostdata, DR=3)
             
             # in work
             
@@ -131,7 +132,7 @@ class SimBinary:
             self.ObjectPMRA=self.ObjectPMRA_DR3cat
             self.ObjectPMDEC=self.ObjectPMDEC_DR3cat
         
-        self.LimitGost(gostdata, perturbation, DR=self.DataRelease)
+        self.LimitGost(gostdata, DR=self.DataRelease)
         
         if self.errCCD:
             length = len(self.reltimes)
@@ -283,7 +284,7 @@ class SimBinary:
                 gostdata.to_csv(filepath, sep =',')
         return gostdata
     
-    def LimitGost(self, gostdata, perturbation, DR):
+    def LimitGost(self, gostdata, DR):
         TstopDRs = {1:'2015-09-16T00:00:00',
                  2:'2016-05-23T11:35:00',
                  3:'2017-05-28T08:44:00',
@@ -678,28 +679,6 @@ class SimBinary:
     def residuals(self, x, t, y):
         return ((self.orbitTI(x, t)-y)**2).ravel()
     
-    def SimPlot(self, times, fdata=None):
-        
-        if fdata is None:
-            fdata = self.FluxRatio(times)
-        
-        factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
-        factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
-        
-        factors = np.array([factra, factdec])
-
-        lower = [350, 0, -100, -100, -100, -100, -365]
-        upper = [370, 1, 100, 100, 100, 100, 365]
-
-        res_fit = least_squares(self.residuals, [369, 0.5, 1, 1, 1, 1, 0], args=(self.reltimes, factors),
-                               bounds=(lower, upper))
-        
-        fitra, fitdec = self.orbitTI(res_fit.x, times)
-        
-        data = self.SimGaia(times, fdata, fitra, fitdec)
-        # self.DataIntep = data
-        return data 
-    
     def get_dataframe(self, data_dir=None):
         # resulting datatframe
         sim_astrometry = pd.DataFrame()
@@ -716,6 +695,24 @@ class SimBinary:
             sim_astrometry.to_csv(data_dir+f'sim{self.ObjectName}_DR{str(self.DataRelease)}.dat', 
                                   sep=' ', header=False, index=False)
         return sim_astrometry
+    
+    def SimPlot(self, times, fdata=None):
+        
+        if fdata is None:
+            fdata = self.FluxRatio(times)
+        
+        factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
+        factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
+        
+        factors = np.array([factra, factdec])
+
+        cs = CubicSpline(self.reltimes, factors, axis=1)
+        interp = cs(times)
+        fitra, fitdec = interp
+        
+        data = self.SimGaia(times, fdata, fitra, fitdec)
+        # self.DataIntep = data
+        return data 
     
     def Plot(self, plot_dir=None, Npoints=500, scan_axis=None, scan_length=None, errCCD=False):
         
