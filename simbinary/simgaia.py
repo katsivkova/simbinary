@@ -25,7 +25,7 @@ from matplotlib.gridspec import GridSpec
 
 
 class SimBinary:
-    def __init__(self, ObjectParameters, DataRelease = 4, SaveGost = True, errCCD = False, GaiaPuls = True, phot_array=None):
+    def __init__(self, ObjectParameters, DataRelease = 4, SaveGost = True, errCCD = False, GaiaPuls = True, perturbation=None):
         
         # filtering nans
         ObjectParameters = {k: ObjectParameters[k] for k in ObjectParameters\
@@ -39,7 +39,6 @@ class SimBinary:
         self.DataRelease = DataRelease
         self.SaveGost = SaveGost
         self.GaiaPuls = GaiaPuls
-        self.phot_array = phot_array
         self.errCCD = errCCD
         
         Trefs = {1:2015.0,
@@ -52,6 +51,35 @@ class SimBinary:
         self.ra0 = 0
         self.dec0 = 0
         
+        if perturbation:
+            
+            if 'component' not in perturbation:
+                raise KeyError("The parameter 'component' is missing. Please, add it to the perturbation dictionary alongside the perturbation array/function labeled as 'value'.")
+            if 'value' not in perturbation:
+                raise KeyError("The parameter 'value' is missing. Please, add it to the perturbation dictionary")
+                
+            if perturbation['component'] not in [1,2]:
+                raise ValueError(f"Please, choose component 1 or 2. Current component is {perturbation['component']}.")
+                
+            if not callable(perturbation['value']) and not isinstance(perturbation['value'], (list, tuple, np.ndarray)):
+                raise ValueError(f"Please, provide a perturbation of function or array type. Current type is {type(perturbation['value'])}.")
+            
+            if isinstance(perturbation['value'], (list, tuple, np.ndarray)):
+                arr = np.asarray(perturbation['value'])
+                if arr.ndim != 2:
+                    raise ValueError("Perturbation must be a 2D array with shape (2, N)")
+                if arr.shape[0] == 2:
+                    pass
+                elif arr.shape[1] == 2:
+                    arr = arr.T
+                else:
+                    raise ValueError(
+                        "Perturbation must have shape (2, N) or (N, 2), "
+                        f"(got {arr.shape})"
+                    )
+                perturbation['value'] = arr
+        self.perturbation = perturbation
+        
         if 'ra0' in ObjectParameters:
             self.ra0 = ObjectParameters['ra0']
         if 'dec0' in ObjectParameters:
@@ -63,12 +91,10 @@ class SimBinary:
         
         gostdata = self.LoadGost()
         
-        self.PrintInfo = True
-        
         if self.ObjectPMDEC is None and self.ObjectPMDEC is None: #add PMRA condition
             print('Applying correction for DR3 proper motion...')
             
-            self.LimitGost(gostdata, DR=3)
+            self.LimitGost(gostdata, perturbation, DR=3)
             
             # in work
             
@@ -105,7 +131,7 @@ class SimBinary:
             self.ObjectPMRA=self.ObjectPMRA_DR3cat
             self.ObjectPMDEC=self.ObjectPMDEC_DR3cat
         
-        self.LimitGost(gostdata, DR=self.DataRelease)
+        self.LimitGost(gostdata, perturbation, DR=self.DataRelease)
         
         if self.errCCD:
             length = len(self.reltimes)
@@ -257,7 +283,7 @@ class SimBinary:
                 gostdata.to_csv(filepath, sep =',')
         return gostdata
     
-    def LimitGost(self, gostdata, DR):
+    def LimitGost(self, gostdata, perturbation, DR):
         TstopDRs = {1:'2015-09-16T00:00:00',
                  2:'2016-05-23T11:35:00',
                  3:'2017-05-28T08:44:00',
@@ -278,6 +304,7 @@ class SimBinary:
         self.reltimes = (self.times - self.Tref).to(u.day).value
         self.timesjd = self.times.to_value('jd')
         
+                    
     def DownloadGost(self, ra, dec, target_name):
 
         # Adapted from Download_HIP_Gaia_GOST by Yicheng Rui
@@ -537,12 +564,21 @@ class SimBinary:
         data['ra1'], data['dec1'] = self.orbit(params1, times)
         data['ra2'], data['dec2'] = self.orbit(params2, times)
         
-        if self.phot_array:
-            pert_ra, pert_dec = self.phot_array(times)
-        else:
-            pert_ra, pert_dec = 0, 0
-        
-        data['ra2'], data['dec2'] = data['ra2'] + pert_ra, data['dec2'] + pert_dec
+        if self.perturbation:
+            if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
+                length = len(times)
+                if self.perturbation['value'].shape[1] < length:
+                    raise ValueError("The perturbation array is too short. "
+                                    "The perturbation array should be greater than DR3 time or higher for DR4 or DR5 simulations. "
+                                    f"Expected length: {length}, current: {self.perturbation['value'].shape[1]}.")
+                pert_ra, pert_dec = self.perturbation['value'][:,:length]
+            else:
+                pert_ra, pert_dec = self.perturbation['value'](times)
+                
+            if self.perturbation['component'] == 1:
+                data['ra1'], data['dec1'] = data['ra1'] + pert_ra, data['dec1'] + pert_dec
+            else:
+                data['ra2'], data['dec2'] = data['ra2'] + pert_ra, data['dec2'] + pert_dec
         
         
         if self.ObjectType != 'BH' or self.ObjectType == 'exoplanet':
@@ -682,15 +718,22 @@ class SimBinary:
         return sim_astrometry
     
     def Plot(self, plot_dir=None, Npoints=500, scan_axis=None, scan_length=None, errCCD=False):
-        print(scan_axis, scan_length, errCCD)
         
+        if self.perturbation:
+            if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
+                perturbation =  self.perturbation
+                self.perturbation = None
+        else:
+            perturbation =  None
+                
         Period = self.ObjectParameters['P']
-        
         timesOrb = np.linspace(-Period/2, Period/2, Npoints)
         dataOrb = self.SimPlot(timesOrb)
         
         timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
         dataSky = self.SimPlot(timesSky)
+                
+        self.perturbation = perturbation
         
         if self.ObjectType=='cepheid':
             label1 = 'Cepheid'
@@ -797,8 +840,27 @@ class SimBinary:
     def PlotCepheid(self, plot_dir= None, Npoints=500):
         if not self.has_pulsation:
             raise KeyError(f"This plot is only for VIM (cepheid or mira). The current type is {self.ObjectType}")
+        
+        
+        if self.perturbation:
+            if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
+                perturbation =  self.perturbation
+                self.perturbation = None
+        else:
+            perturbation =  None
+                
+        Period = self.ObjectParameters['P']
+        timesOrb = np.linspace(-Period/2, Period/2, Npoints)
+        dataOrb = self.SimPlot(timesOrb)
+        
+        timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
+        dataSky = self.SimPlot(timesSky)
+                
+        self.perturbation = perturbation
+                
         label1 = 'Cepheid'
         label2 = 'Companion'
+        
         fig = plt.figure(constrained_layout=True, figsize=(14, 7))
         fig.suptitle(self.ObjectName)
         gs = GridSpec(2, 2, figure=fig, width_ratios=[2, 3])
@@ -830,9 +892,6 @@ class SimBinary:
         
         Period = self.ObjectParameters['P']
         
-        timesOrb = np.linspace(-Period/2, Period/2, Npoints)
-        dataOrb = self.SimPlot(timesOrb)
-        
         temp = self.params_ph
         temp['a'] = self.a_ph_min
         ra_min, dec_min = self.orbit(temp, timesOrb)
@@ -858,9 +917,6 @@ class SimBinary:
         ax2.legend()
         
         # Sky
-        
-        timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
-        dataSky = self.SimPlot(timesSky)
         
         ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
         ra_shift2, dec_shift2 = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
@@ -926,6 +982,23 @@ class SimBinary:
     def PlotCepheidRow(self, plot_dir= None, Npoints=500):
         if not self.has_pulsation:
             raise KeyError(f"This plot is only for VIM (cepheid or mira). The current type is {self.ObjectType}")
+        
+        if self.perturbation:
+            if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
+                perturbation =  self.perturbation
+                self.perturbation = None
+        else:
+            perturbation =  None
+                
+        Period = self.ObjectParameters['P']
+        timesOrb = np.linspace(-Period/2, Period/2, Npoints)
+        dataOrb = self.SimPlot(timesOrb)
+        
+        timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
+        dataSky = self.SimPlot(timesSky)
+                
+        self.perturbation = perturbation
+        
         label1 = 'Cepheid'
         label2 = 'Companion'
         fig, axs = plt.subplots(1,3, figsize=(15, 5), constrained_layout=True)
@@ -954,9 +1027,6 @@ class SimBinary:
         
         Period = self.ObjectParameters['P']
         
-        timesOrb = np.linspace(-Period/2, Period/2, Npoints)
-        dataOrb = self.SimPlot(timesOrb)
-        
         temp = self.params_ph
         temp['a'] = self.a_ph_min
         ra_min, dec_min = self.orbit(temp, timesOrb)
@@ -982,9 +1052,6 @@ class SimBinary:
         ax2.legend()
         
         # Sky
-        
-        timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
-        dataSky = self.SimPlot(timesSky)
         
         ra_shift1, dec_shift1 = np.mean(dataSky['ra_ss_plx']), np.mean(dataSky['dec_ss_plx'])
         ra_shift2, dec_shift2 = np.mean(dataSky['ra_nps_plx']), np.mean(dataSky['dec_nps_plx'])
