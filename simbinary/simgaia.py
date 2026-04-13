@@ -23,6 +23,14 @@ from kepmodel.astro import AstroModel as AstrometricModel
 from scipy.optimize import least_squares
 from matplotlib.gridspec import GridSpec
 from scipy.interpolate import CubicSpline
+from scipy.interpolate import PchipInterpolator
+
+from astropy.timeseries import LombScargle
+import json
+from datetime import datetime
+import io
+import re
+import contextlib
 
 
 class SimBinary:
@@ -32,7 +40,7 @@ class SimBinary:
         ObjectParameters = {k: ObjectParameters[k] for k in ObjectParameters\
                             if not pd.isnull(ObjectParameters[k])}
         # checking that all parameters are ok
-        self.check_params(ObjectParameters, DataRelease)
+        self._check_params(ObjectParameters, DataRelease)
         # defining few useful parameters
         self.ObjectParameters = ObjectParameters
         self.ObjectName = ObjectParameters['Object']
@@ -41,6 +49,10 @@ class SimBinary:
         self.SaveGost = SaveGost
         self.GaiaPuls = GaiaPuls
         self.errCCD = errCCD
+        self.has_pulsation = False
+        self.has_convection = False
+        self.ra0 = self.ObjectParameters.get('ra0', 0)
+        self.dec0 = self.ObjectParameters.get('dec0', 0)
         
         Trefs = {1:2015.0,
                  2:2015.5,
@@ -48,56 +60,20 @@ class SimBinary:
                  4:2017.5,
                  5:2020}
         self.Tref = Time(Trefs[DataRelease],format='decimalyear')
-        self.has_pulsation = False
-        self.ra0 = 0
-        self.dec0 = 0
         
-        if perturbation:
-            
-            if 'component' not in perturbation:
-                raise KeyError("The parameter 'component' is missing. Please, add it to the perturbation dictionary alongside the perturbation array/function labeled as 'value'.")
-            if 'value' not in perturbation:
-                raise KeyError("The parameter 'value' is missing. Please, add it to the perturbation dictionary")
-                
-            if perturbation['component'] not in [1,2]:
-                raise ValueError(f"Please, choose component 1 or 2. Current component is {perturbation['component']}.")
-                
-            if not callable(perturbation['value']) and not isinstance(perturbation['value'], (list, tuple, np.ndarray)):
-                raise ValueError(f"Please, provide a perturbation of function or array type. Current type is {type(perturbation['value'])}.")
-            
-            if isinstance(perturbation['value'], (list, tuple, np.ndarray)):
-                arr = np.asarray(perturbation['value'])
-                if arr.ndim != 2:
-                    raise ValueError("Perturbation must be a 2D array with shape (2, N)")
-                if arr.shape[0] == 2:
-                    pass
-                elif arr.shape[1] == 2:
-                    arr = arr.T
-                else:
-                    raise ValueError(
-                        "Perturbation must have shape (2, N) or (N, 2), "
-                        f"(got {arr.shape})"
-                    )
-                perturbation['value'] = arr
-        self.perturbation = perturbation
+        self._check_perturbation(perturbation)
         
-        if 'ra0' in ObjectParameters:
-            self.ra0 = ObjectParameters['ra0']
-        if 'dec0' in ObjectParameters:
-            self.dec0 = ObjectParameters['dec0']
-        
-        self.querySimbadGaia()
+        self._querySimbadGaia()
         if GaiaPuls and self.ObjectType=='cepheid':
-            self.queryGaiaCepheid()
+            self._queryGaiaCepheid()
         
         gostdata = self.LoadGost()
+            
         
         if self.ObjectPMDEC is None and self.ObjectPMDEC is None: #add PMRA condition
             print('Applying correction for DR3 proper motion...')
             
             self.LimitGost(gostdata, DR=3)
-            
-            # in work
             
             self.ObjectPMRA, self.ObjectPMDEC = 0, 0
             w_bs = self.SimWAL(errCCD=False)
@@ -138,10 +114,15 @@ class SimBinary:
             length = len(self.reltimes)
             self.errors = np.random.normal(0, self.errALCCD(self.ObjectGmag), length)
         
+        if self.ObjectType == 'AGB':
+            self.LightCurve()
+            self.Convection()
+            self.has_convection = True
+        
         w_bs = self.SimWAL(errCCD=errCCD)
                 
         
-    def check_params(self, ObjectParameters, DataRelease):
+    def _check_params(self, ObjectParameters, DataRelease):
         
         if DataRelease not in [1, 2, 3, 4, 5]:
             raise ValueError("Please, choose on of the Gaia DR: 1, 2, 3, 4, 5. \
@@ -149,7 +130,7 @@ class SimBinary:
         
         schema = {
              'Object': {'required': True, 'type': str},
-             'type':   {'required': True, 'type': str, 'selection':['BH', 'binary', 'cepheid', 'exoplanet']},
+             'type':   {'required': True, 'type': str, 'selection':['BH', 'binary', 'cepheid', 'exoplanet', 'AGB']},
              'ra':     {'required': False,'type': (float, int, np.floating), 'range': [0, 360]},
              'dec':    {'required': False,'type': (float, int, np.floating), 'range': [-90, 90]},
              'id3':    {'required': False,'type': str},
@@ -198,6 +179,40 @@ class SimBinary:
                     if value not in rule['selection']:
                         raise ValueError(f"The object type '{value}' doesn\'t \
                                          correspond to the supported ones: {rule['selection']}")
+                                         
+    def _check_perturbation(self, perturbation):
+        
+        if perturbation:
+        
+            if 'component' not in perturbation:
+                raise KeyError("The parameter 'component' is missing. Please, add it to the perturbation dictionary alongside the perturbation array/function labeled as 'value'.")
+            if 'value' not in perturbation:
+                raise KeyError("The parameter 'value' is missing. Please, add it to the perturbation dictionary")
+                
+            if perturbation['component'] not in [1,2]:
+                raise ValueError(f"Please, choose component 1 or 2. Current component is {perturbation['component']}.")
+                
+            if not callable(perturbation['value']) and not isinstance(perturbation['value'], (list, tuple, np.ndarray)):
+                raise ValueError(f"Please, provide a perturbation of function or array type. Current type is {type(perturbation['value'])}.")
+            
+            if isinstance(perturbation['value'], (list, tuple, np.ndarray)):
+                arr = np.asarray(perturbation['value'])
+                if arr.ndim != 2:
+                    raise ValueError("Perturbation must be a 2D array with shape (2, N)")
+                if arr.shape[0] == 2:
+                    pass
+                elif arr.shape[1] == 2:
+                    arr = arr.T
+                else:
+                    raise ValueError(
+                        "Perturbation must have shape (2, N) or (N, 2), "
+                        f"(got {arr.shape})"
+                    )
+                perturbation['value'] = arr
+            
+            print(f"Perturbation for component {perturbation['component']}")
+        self.perturbation = perturbation
+    
     def errALCCD(self, G):
         # adopted from gaiamock https://github.com/kareemelbadry/gaiamock/
         # El-Badry et al. 2024, 2024OJAp....7E.100E
@@ -205,7 +220,7 @@ class SimBinary:
         sigma_wal = [0.4, 0.35, 0.15, 0.17, 0.23, 0.13,0.13, 0.135, 0.125, 0.13, 0.15, 0.23, 0.36, 0.63, 1.05, 2.05, 4.1]
         return np.interp(G, G_vals, sigma_wal)
     
-    def querySimbadGaia(self):
+    def _querySimbadGaia(self):
         self.ObjectRA = None
         self.ObjectDEC = None
         self.id3 = None 
@@ -335,6 +350,91 @@ class SimBinary:
         data['Target']=[target_name]*len(data)
 
         return data
+    
+    def LightCurve(self):
+        
+        Vmin = self.ObjectParameters['Vmin']
+        Vmax = self.ObjectParameters['Vmax']
+        Ppuls = self.ObjectParameters['Ppuls']
+        T0 = self.ObjectParameters['T0puls']
+        Gamma = self.ObjectParameters.get('Gamma', 0.0)
+        seed = self.ObjectParameters.get('seed_conv', 1234)
+        rng = np.random.default_rng(seed)
+        # ------------------------------------------------------------
+        # Create synthetic ASAS-like light curve (irregular sampling + noise)
+        # Stored in self.lc as a pandas DataFrame
+        # ------------------------------------------------------------
+        # You can expose these as ObjectParameters if you like
+        Nlc = self.ObjectParameters.get('Nlc', 350)          # typical few hundred points
+        season_length = self.ObjectParameters.get('LC_season_days', 220)  # observing season per year
+        cadence_min = self.ObjectParameters.get('LC_cadence_min', 1.0)    # days
+        cadence_max = self.ObjectParameters.get('LC_cadence_max', 6.0)    # days
+        sigma_floor = self.ObjectParameters.get('LC_sigma_floor', 0.02)   # mag
+        sigma_ceiling = self.ObjectParameters.get('LC_sigma_ceiling', 0.08)# mag
+
+        t_start = float(np.min(self.timesjd))
+        t_end   = float(np.max(self.timesjd))
+        baseline = t_end - t_start
+        
+        # Build seasons: every ~365d, observe for 'season_length' days with random start offset
+        years = int(np.ceil(baseline / 365.25)) + 1
+        season_starts = t_start + np.arange(years)*365.25 + rng.uniform(-30, 30, size=years)
+
+        lc_times = []
+        for s0 in season_starts:
+            s1 = s0 + season_length
+            # draw a random-cadence "walk" through the season
+            t = s0 + rng.uniform(0, 2)  # small random offset
+            while t < s1 and t < t_end:
+                if t >= t_start:
+                    lc_times.append(t)
+                t += rng.uniform(cadence_min, cadence_max)
+
+        lc_times = np.array(lc_times, dtype=float)
+
+        # If we got too many/few points, thin or top up with uniform draws within seasons
+        if len(lc_times) > Nlc:
+            lc_times = rng.choice(lc_times, size=Nlc, replace=False)
+        elif len(lc_times) < max(30, int(0.6*Nlc)):
+            # top up: sample uniformly within the overall baseline (still "random-ish")
+            extra = rng.uniform(t_start, t_end, size=(Nlc - len(lc_times)))
+            lc_times = np.concatenate([lc_times, extra])
+
+        lc_times = np.sort(lc_times)
+
+        # Evaluate asymmetric-sine flux model at lc_times (same shape as your f_AGB definition)
+        x_lc = 2*np.pi*(lc_times - T0)/Ppuls
+      
+        if np.isclose(Gamma, 0.0):
+            factor_lc = np.sin(x_lc)
+        else:
+            factor_lc = (1.0/Gamma) * np.arctan((Gamma*np.sin(x_lc)) / (1.0 - Gamma*np.cos(x_lc)))
+
+        # --- magnitude-domain pulsation model ---
+        # Define mag amplitude from Vmin/Vmax (peak-to-peak = Vmin - Vmax)
+        A_mag = 0.5 * (Vmin - Vmax)          # semi-amplitude in mag
+        m0    = 0.5 * (Vmin + Vmax)          # mean magnitude (midpoint)
+
+        # Gamma=0 => pure sinusoid in magnitude
+        mag_true = m0 + A_mag * factor_lc
+
+        # note: sinusoidal in magnitude is not sinusoidal in flux!
+
+        # Per-point uncertainties + noise (heteroscedastic)
+        mag_err = rng.uniform(sigma_floor, sigma_ceiling, size=len(lc_times))
+        mag_obs = mag_true + rng.normal(0.0, mag_err)
+
+        # Save
+        self.lc = pd.DataFrame({
+            "time_jd": lc_times,
+            "mag_true": mag_true,
+            "mag": mag_obs,
+            "mag_err": mag_err,
+            "band": "V"
+        })
+        print('self has now light curve data')
+
+        self.has_lightcurve = True
  
     def FluxRatio(self, times, Tplot=0):
         
@@ -351,7 +451,7 @@ class SimBinary:
             fdata['f_tot'] = f_tot
             self.has_pulsation = True
             
-        elif self.ObjectType == 'cepheid':
+        elif self.ObjectType == 'cepheid' or self.ObjectType == 'AGB':
             required = ['Vmin', 'Vmax', 'Vcomp', 'Ppuls', 'T0puls']
             if all(key in self.ObjectParameters for key in required):
                 puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsation(times, Tplot)
@@ -385,7 +485,7 @@ class SimBinary:
             fdata['r2'] = [0] # exoplanet
             
         else:
-            raise KeyError(f"Please, select between: binary, cepheod, BH, exoplanet.")
+            raise KeyError(f"Please, select between: binary, cepheid, BH, AGB or exoplanet. Current is {self.ObjectType}.")
         
         return fdata
         
@@ -398,15 +498,21 @@ class SimBinary:
         T0 = self.ObjectParameters['T0puls']
         T0 = T0 - self.Tref.jd # converting T0 with a correct time reference
         T0 = T0 - Tplot
-        print(Vmin, Vmax, Vcomp, Ppuls, T0)
+        
+        Gamma = self.ObjectParameters.get('Gamma', 0.0)
+        
         # minimal cepheid flux and companion flux relative to ref flux
         # F/Fref = 10**(-0.4*(m-mref))
         Vmean = np.mean([Vmax, Vmin]) # reference flux 
         f_comp = 10**(-0.4*(Vcomp-Vmean))
         
-        puls = (Vmax-Vmin)/2 *\
-            np.cos(2*np.pi*(times - T0)/Ppuls) \
-                + (Vmax+Vmin)/2
+        x = 2*np.pi*(times - T0)/Ppuls  # phase argument; use -T0 (time of reference)
+        if np.isclose(Gamma, 0.0):
+            factor = np.sin(x)
+        else:
+            factor = (1.0/Gamma) * np.arctan2(Gamma*np.sin(x), 1.0 - Gamma*np.cos(x))
+        
+        puls = (Vmax-Vmin)/2 * factor + (Vmax+Vmin)/2
         
         puls_ceph = - 2.5*np.log10(10**(-0.4*(puls))-10**(-0.4*(Vcomp)))
         f_ceph = 10**(-0.4*(puls_ceph-Vmean))
@@ -425,7 +531,7 @@ class SimBinary:
         
         return puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
     
-    def queryGaiaCepheid(self):
+    def _queryGaiaCepheid(self):
         Gaia.ROW_LIMIT = 1  
         query = f"""
         SELECT *
@@ -464,9 +570,6 @@ class SimBinary:
         self.PulsParams['T0'] = np.array(T0)
         self.PulsParams['P'] = np.array(P)
         
-
-        
-    
     def addPulsationGaia(self, times, Tplot):
         
         T0 = self.PulsParams['T0'][0] - Tplot
@@ -499,6 +602,160 @@ class SimBinary:
         r2_nps = f_comp/(f_comp+f_mean) # companion
 
         return puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
+    
+    def addConvectionJitter(self, times):
+        
+        if times is self.reltimes:
+            
+            return self.dra_conv_mas, self.ddec_conv_mas
+        
+        # binning to have the same value per observation
+        sim_astrometry = pd.DataFrame()
+        sim_astrometry['times'] = self.reltimes
+        sim_astrometry['ra'] = self.dra_conv_mas
+        sim_astrometry['dec'] = self.ddec_conv_mas
+
+        dt_sim = np.diff(sim_astrometry['times'])
+        new_bin = dt_sim >= 4
+
+        group = np.zeros_like(sim_astrometry['times'], dtype=int)
+        group[1:] = np.cumsum(new_bin)
+
+        sim_astrometry['group1'] = group
+        bin_sim = sim_astrometry.groupby("group1").agg('mean')
+        
+        # interpolating
+        
+        conv = np.array([bin_sim['ra'], bin_sim['dec']])
+
+        # cs = CubicSpline(bin_sim['times'], conv, axis=1)
+        # interp = cs(times)
+        # fit_dra_conv_mas, fit_ddec_conv_mas = interp
+
+        pchip = PchipInterpolator(bin_sim['times'], conv, axis=1)
+        interp = pchip(times)
+        fit_dra_conv_mas, fit_ddec_conv_mas = interp
+        
+        return fit_dra_conv_mas, fit_ddec_conv_mas
+        
+    def Convection(self):
+        
+        """
+        Create convection/inhomogeneity photocentre jitter for the *primary*.
+
+        sigma_AU: stationary 1D std of photocentre offset in AU (typical 0.08–0.2 AU ballpark).
+        tau_days: correlation time in days (months-to-years; try 100–400 d first).
+        phase_mod_amp: optional coupling to pulsation phase (0 = none).
+                    If >0 and pulsation params exist, sigma is modulated by (1 + A*cos(phase)).
+        # Use of 
+        """
+        
+        R_star = self.ObjectParameters.get('R_star', 1)
+        Ppuls = self.ObjectParameters.get('Ppuls', 200)
+        tau_days = self.ObjectParameters.get('tau_conv_days', 200.0)
+        seed     = self.ObjectParameters.get('seed_conv', 1234)
+        phaseA   = self.ObjectParameters.get('conv_phase_amp', 0.0)
+        
+        sigma_Rstar = 10**(np.log10(np.log10(Ppuls)/3.38) / 0.12) # from Eq. 8 of Beguin, Chiavassa et al. 2024
+        sigma_AU = sigma_Rstar * R_star
+        print('sigma_Rstar is', sigma_Rstar, 'Rstar')
+        print('sigma_AU is', sigma_AU, 'au')
+        
+        sigma_mas = sigma_AU * self.ObjectParameters['plx']
+        print('sigma_mas is', sigma_mas, 'mas')
+        
+        rng = np.random.default_rng(seed)
+
+        # times in days relative to Tref (your reltimes is in days)
+        t_days = np.asarray(self.reltimes, dtype=float)
+
+        # Optional: let jitter be larger near maximum expansion (simple toy coupling)
+        sig = float(sigma_AU)
+        if phaseA != 0.0 and ('Ppuls' in self.ObjectParameters) and ('T0puls' in self.ObjectParameters):
+            Ppuls = params['Ppuls']
+            T0puls = params['T0puls']
+            T0 = T0 - self.Tref.jd # converting T0 with a correct time reference
+            # your timesjd exists; use it for phase if available
+            phase = 2*np.pi*(times - T0puls)/Ppuls
+            mod = 1.0 + float(phase_mod_amp)*np.cos(phase)
+            mod = np.clip(mod, 0.1, None)  # avoid negative sigma
+        else:
+            mod = 1.0
+
+        # Generate OU in AU
+        dra_AU  = self._ou_process(t_days, sig, tau_days, rng) * mod
+        ddec_AU = self._ou_process(t_days, sig, tau_days, rng) * mod
+
+        # Convert AU -> mas using parallax:
+        # 1 AU subtends parallax angle; if pll is in mas, delta(mas) = delta(AU) * pll(mas)
+        pll_mas = float(self.ObjectParameters['plx'])
+        dra_conv_mas  = dra_AU  * pll_mas
+        ddec_conv_mas = ddec_AU * pll_mas
+        # the mean is not always around zero - shift for that
+        self.dra_conv_mas = dra_conv_mas - np.mean(dra_conv_mas)
+        self.ddec_conv_mas = ddec_conv_mas - np.mean(ddec_conv_mas)
+    
+    def _ou_process(self, t_days, sigma, tau_days, rng, burnin_steps=0):
+        """Generate an Ornstein–Uhlenbeck (OU) process at (possibly) irregular times.
+        # An Ornstein–Uhlenbeck (OU) process is a continuous-time stochastic process that describes 
+        # random motion with a tendency to relax back to a preferred value. It is often summarized as 
+        # “mean-reverting Brownian motion.”
+
+        Parameters
+        ----------
+        t_days : array-like
+            Time samples in days (must be non-decreasing).
+        sigma : float
+            *Stationary* 1D standard deviation of the OU process (same units as output).
+        tau_days : float
+            Correlation timescale in days. If <=0, falls back to white noise.
+        rng : numpy.random.Generator
+            Random generator.
+        burnin_steps : int, optional
+            If >0, evolve the OU process for this many extra steps of size ~median(dt)
+            before returning (rarely needed if we start stationary).
+
+        Notes
+        -----
+        Exact OU discretisation at each step:
+            x_k = a x_{k-1} + eps,  a = exp(-dt/tau)
+            eps ~ N(0, sigma^2 (1-a^2))
+        """
+        t_days = np.asarray(t_days, dtype=float)
+        x = np.zeros_like(t_days)
+
+        n = len(t_days)
+        if n == 0:
+            return x
+
+        if tau_days <= 0:
+            x[:] = rng.normal(0.0, sigma, size=n)
+            return x
+
+        # Start in the stationary distribution (this is the key fix)
+        x_prev = rng.normal(0.0, sigma)
+
+        # Optional burn-in (usually unnecessary now, but harmless)
+        if burnin_steps and n > 1:
+            dts = np.diff(t_days)
+            dt0 = float(np.median(dts[dts > 0])) if np.any(dts > 0) else 1.0
+            a0 = np.exp(-dt0 / tau_days)
+            s0 = sigma * np.sqrt(1.0 - a0*a0)
+            for _ in range(int(burnin_steps)):
+                x_prev = a0 * x_prev + rng.normal(0.0, s0)
+
+        x[0] = x_prev
+        for k in range(1, n):
+            dt = t_days[k] - t_days[k-1]
+            if dt < 0:
+                raise ValueError("t_days must be non-decreasing")
+
+            a = np.exp(-dt / tau_days)
+            s = sigma * np.sqrt(1.0 - a*a)
+            x_prev = a * x_prev + rng.normal(0.0, s)
+            x[k] = x_prev
+
+        return x
 
     def orbit(self, theta, times): # orbit model
         
@@ -580,6 +837,12 @@ class SimBinary:
                 data['ra1'], data['dec1'] = data['ra1'] + pert_ra, data['dec1'] + pert_dec
             else:
                 data['ra2'], data['dec2'] = data['ra2'] + pert_ra, data['dec2'] + pert_dec
+                
+        if self.has_convection:
+            
+            ra_c, dec_c = self.addConvectionJitter(times)
+            
+            data['ra1'], data['dec1'] = data['ra1'] + ra_c, data['dec1'] + dec_c
         
         
         if self.ObjectType != 'BH' or self.ObjectType == 'exoplanet':
@@ -720,12 +983,18 @@ class SimBinary:
             if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
                 perturbation =  self.perturbation
                 self.perturbation = None
+            perturbation = self.perturbation
         else:
             perturbation =  None
+            
+        has_convection = self.has_convection
+        self.has_convection = False
                 
         Period = self.ObjectParameters['P']
         timesOrb = np.linspace(-Period/2, Period/2, Npoints)
         dataOrb = self.SimPlot(timesOrb)
+        
+        self.has_convection = has_convection
         
         timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
         dataSky = self.SimPlot(timesSky)
@@ -748,6 +1017,10 @@ class SimBinary:
             label1 = 'Host Star'
             label2 = 'Exoplanet'
             lw = 5
+        elif self.ObjectType=='AGB':
+            label1 = 'AGB'
+            label2 = 'Companion'
+            lw = 1
         else:
             raise KeyError(f"Unknown type {self.ObjectType}")
             
@@ -836,26 +1109,37 @@ class SimBinary:
         
     def PlotCepheid(self, plot_dir= None, Npoints=500):
         if not self.has_pulsation:
-            raise KeyError(f"This plot is only for VIM (cepheid or mira). The current type is {self.ObjectType}")
+            raise KeyError(f"This plot is only for VIM (cepheid or AGB). The current type is {self.ObjectType}")
         
         
         if self.perturbation:
             if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
                 perturbation =  self.perturbation
                 self.perturbation = None
+            perturbation = self.perturbation
         else:
             perturbation =  None
+            
+        has_convection = self.has_convection
+        self.has_convection = False
                 
         Period = self.ObjectParameters['P']
         timesOrb = np.linspace(-Period/2, Period/2, Npoints)
         dataOrb = self.SimPlot(timesOrb)
         
+        self.has_convection = has_convection
+        
         timesSky = np.linspace(np.min(self.reltimes), np.max(self.reltimes), Npoints)
         dataSky = self.SimPlot(timesSky)
                 
         self.perturbation = perturbation
-                
-        label1 = 'Cepheid'
+        
+        
+        if self.ObjectType == 'cepheid':
+            label1 = 'Cepheid'
+        elif self.ObjectType == 'AGB':
+            label1 = 'AGB'
+        
         label2 = 'Companion'
         
         fig = plt.figure(constrained_layout=True, figsize=(14, 7))
@@ -939,11 +1223,15 @@ class SimBinary:
         dec_min = dataMin['dec_bs_plx']-dec_shift2
         dec_max = dataMax['dec_bs_plx']-dec_shift2
         
+        label_sys='Binary system'
+        if self.ObjectType == 'AGB':
+            label_sys = 'Binary system with AGB'
+        
         ax3.set_title('On-sky (orbit + proper + parallax motions)')
         ax3.plot(dataSky['ra_ss_plx']-ra_shift1, dataSky['dec_ss_plx']-dec_shift1, 
                     label='Single star model', color = 'plum', zorder=1)
         ax3.plot(dataSky['ra_nps_plx']-ra_shift2, dataSky['dec_nps_plx']-dec_shift2, 
-                 label='Binary system', color='darkviolet', zorder=2, lw=2)
+                 label=label_sys, color='darkviolet', zorder=2, lw=2)
         # ax3.plot(dataSky['ra_bs_plx']-ra_shift2, dataSky['dec_bs_plx']-dec_shift2, 
         #             label='Photocentre of the system', color = 'black', alpha =0.1)      
         
@@ -984,6 +1272,7 @@ class SimBinary:
             if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
                 perturbation =  self.perturbation
                 self.perturbation = None
+            perturbation = self.perturbation
         else:
             perturbation =  None
                 
