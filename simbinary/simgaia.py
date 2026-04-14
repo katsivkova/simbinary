@@ -35,6 +35,17 @@ import contextlib
 
 class SimBinary:
     def __init__(self, ObjectParameters, DataRelease = 4, SaveGost = True, errCCD = False, GaiaPuls = True, perturbation=None):
+        """
+        Creates SimBinary object and produces epoch astrometry simulation
+        Parameters
+        ----------
+        ObjectParameters : dictionary following supported pattern.
+        DataRelease : Gaia DR. Integer from 1 to 5.
+        SaveGost : Boolean. Default True. If True creates a folder "gost" in current working directory.
+        errCCD : Boolean. Default False. Add per CCD noise.
+        GaiaPuls : Boolean. Default True. Use Gaia pulsation for Cepheid or not.
+        perturbation : dictionary following supported pattern. Default None.
+        """
         
         # filtering nans
         ObjectParameters = {k: ObjectParameters[k] for k in ObjectParameters\
@@ -49,40 +60,48 @@ class SimBinary:
         self.SaveGost = SaveGost
         self.GaiaPuls = GaiaPuls
         self.errCCD = errCCD
-        self.has_pulsation = False
-        self.has_convection = False
-        self.ra0 = self.ObjectParameters.get('ra0', 0)
-        self.dec0 = self.ObjectParameters.get('dec0', 0)
+        self.has_pulsation = False #default
+        self.has_convection = False #default
+        self.ra0 = self.ObjectParameters.get('ra0', 0) #default is 0
+        self.dec0 = self.ObjectParameters.get('dec0', 0) #default is 0
         
-        Trefs = {1:2015.0,
+        Trefs = {1:2015.0, # reference time depending on the DR
                  2:2015.5,
                  3:2016,
                  4:2017.5,
                  5:2020}
         self.Tref = Time(Trefs[DataRelease],format='decimalyear')
         
+        # check perturbation if any
         self._check_perturbation(perturbation)
         
+        # query missing parameters
         self._querySimbadGaia()
         if GaiaPuls and self.ObjectType=='cepheid':
+            # query Cepheid pulsation parameters in Gaia DR3
             self._queryGaiaCepheid()
         
+        # load gost if already saved, get gost data if not
         gostdata = self.LoadGost()
             
-        
-        if self.ObjectPMDEC is None and self.ObjectPMDEC is None: #add PMRA condition
+        # apply proper motion (PM) correction if no PM in parameters
+        if self.ObjectPMRA is None or self.ObjectPMDEC is None: 
             print('Applying correction for DR3 proper motion...')
             
+            # the correction if applied with DR3, so limit observations to DR3 time
             self.LimitGost(gostdata, DR=3)
             
+            # set PM to 0
             self.ObjectPMRA, self.ObjectPMDEC = 0, 0
+            # simulate along scan of the target with null PM
             w_bs = self.SimWAL(errCCD=False)
             
+            # fit single star (SS) model
             mA = np.array([
                 np.sin(self.scanAngleRAD),                # alpha0
-                self.reltimes*np.sin(self.scanAngleRAD),        # pmra
+                self.reltimes*np.sin(self.scanAngleRAD),  # pmra
                 np.cos(self.scanAngleRAD),                # delta0
-                self.reltimes*np.cos(self.scanAngleRAD),        # pmdec
+                self.reltimes*np.cos(self.scanAngleRAD),  # pmdec
                 self.plxFactorAL                          # parallax
                 ]).T
             werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
@@ -90,45 +109,59 @@ class SimBinary:
             p_fit = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
             _, pmra, _, pmdec, _ = p_fit
             
+            # calculate errors
             F = mA.T @ Cinv @ mA
             Cov_p = np.linalg.inv(F)
             errors = np.sqrt(np.diag(Cov_p))
             _, pmra_err, _, pmdec_err, _ = errors
             
+            # get chi2
             w_fit = mA @ p_fit
             chi2r = np.sum(((w_bs-w_fit)/werr)**2)/(len(w_fit)-5)
             
-            print(f'Correction: {np.round(pmra*365.25, 3)}\u00B1{np.round(pmra_err*365.25*chi2r**0.5, 3)} {np.round(pmdec*365.25, 3)}\u00B1{np.round(pmdec_err*365.25*chi2r**0.5, 3)}')
-            self.ObjectPMRA = self.ObjectPMRA_DR3cat - pmra*365.25
-            self.ObjectPMDEC = self.ObjectPMDEC_DR3cat - pmdec*365.25
+            # print and save the resulting PM
+            print(f'Correction: {np.round(pmra*365.25, 3)}\u00B1{np.round(pmra_err*365.25*chi2r**0.5, 3)} '
+                  f'{np.round(pmdec*365.25, 3)}\u00B1{np.round(pmdec_err*365.25*chi2r**0.5, 3)}')
+            self.ObjectPMRA = self.ObjectPMRA_DR3cat - pmra*365.25    # the fitted PM was in mas/day
+            self.ObjectPMDEC = self.ObjectPMDEC_DR3cat - pmdec*365.25 # converting in mas/year
             self.ObjectPMRA_err = self.ObjectPMRA_DR3cat_err + pmra_err*365.25*chi2r**0.5
             self.ObjectPMDEC_err = self.ObjectPMDEC_DR3cat_err + pmdec_err*365.25*chi2r**0.5
-            print(f'Proper motion corrected to: {np.round(self.ObjectPMRA, 3)}\u00B1{np.round(self.ObjectPMRA_err,3)} and {np.round(self.ObjectPMDEC, 3)}\u00B1{np.round(self.ObjectPMDEC_err,3)} mas')
-        elif self.ObjectPMDEC is None:
-            self.ObjectPMRA=self.ObjectPMRA_DR3cat
-            self.ObjectPMDEC=self.ObjectPMDEC_DR3cat
+            print(f'Proper motion corrected to: '
+                  f'{np.round(self.ObjectPMRA, 3)}\u00B1{np.round(self.ObjectPMRA_err,3)} '
+                  f'and {np.round(self.ObjectPMDEC, 3)}\u00B1{np.round(self.ObjectPMDEC_err,3)} mas')
+        # elif self.ObjectPMDEC is None: # to check what is that
+        #     self.ObjectPMRA=self.ObjectPMRA_DR3cat
+        #     self.ObjectPMDEC=self.ObjectPMDEC_DR3cat
         
+        # limit gost observations to requested DR time
         self.LimitGost(gostdata, DR=self.DataRelease)
         
-        if self.errCCD:
+        if self.errCCD: # add errors in produced along scans
             length = len(self.reltimes)
             self.errors = np.random.normal(0, self.errALCCD(self.ObjectGmag), length)
         
-        if self.ObjectType == 'AGB':
+        if self.ObjectType == 'AGB': # a star with convection case
             self.LightCurve()
             self.Convection()
             self.has_convection = True
         
+        # final simulation of along scans
         w_bs = self.SimWAL(errCCD=errCCD)
                 
         
     def _check_params(self, ObjectParameters, DataRelease):
-        
+        """
+        Internal function to check if the parameters correspond to supported format.
+        Parameters
+        ----------
+        ObjectParameters : a dictionary following requested scheme
+        DataRelease : 1, 2, 3, 4 or 5, will repot error instead
+        """
         if DataRelease not in [1, 2, 3, 4, 5]:
             raise ValueError("Please, choose on of the Gaia DR: 1, 2, 3, 4, 5. \
                              The current value '{DataRelease} is not supported.'")
         
-        schema = {
+        schema = { # parameter's name, authorized type, etc
              'Object': {'required': True, 'type': str},
              'type':   {'required': True, 'type': str, 'selection':['BH', 'binary', 'cepheid', 'exoplanet', 'AGB']},
              'ra':     {'required': False,'type': (float, int, np.floating), 'range': [0, 360]},
@@ -158,30 +191,37 @@ class SimBinary:
         }
         
         for key, rule in schema.items():
+            # check if required
             if rule['required'] and key not in ObjectParameters:
                 raise KeyError(f"The parameter '{key}' is missing. Please, add \
                                it to the parameters dictionary.")
-               
+
             if key in ObjectParameters:
                 expected = rule["type"]
                 value = ObjectParameters[key]
-                
+                # check the type
                 if not isinstance(value, expected):
                     raise TypeError(f"The parameter '{key}' is {type(ObjectParameters[key])}.\
                                     Should be {expected}.")
-            
+                # check if corresponds to authorized range
                 if 'range' in rule:
                     min_v, max_v = rule['range']
                     if not (min_v <= value <= max_v):
                         raise ValueError(f"The parameter '{key}' is out of range \
                                          ({min_v}, {max_v}) with value {value}.")
+                # check if corresponds to authorized range
                 if 'selection' in rule:
                     if value not in rule['selection']:
                         raise ValueError(f"The object type '{value}' doesn\'t \
                                          correspond to the supported ones: {rule['selection']}")
                                          
     def _check_perturbation(self, perturbation):
-        
+        """
+        Internal function to check the perturbation format
+        Parameters
+        ----------
+        perturbation : the perturbation dictionary
+        """
         if perturbation:
         
             if 'component' not in perturbation:
@@ -197,12 +237,13 @@ class SimBinary:
             
             if isinstance(perturbation['value'], (list, tuple, np.ndarray)):
                 arr = np.asarray(perturbation['value'])
+                # check if 2D array
                 if arr.ndim != 2:
                     raise ValueError("Perturbation must be a 2D array with shape (2, N)")
                 if arr.shape[0] == 2:
                     pass
                 elif arr.shape[1] == 2:
-                    arr = arr.T
+                    arr = arr.T # transpose if (N, 2)
                 else:
                     raise ValueError(
                         "Perturbation must have shape (2, N) or (N, 2), "
@@ -214,13 +255,25 @@ class SimBinary:
         self.perturbation = perturbation
     
     def errALCCD(self, G):
-        # adopted from gaiamock https://github.com/kareemelbadry/gaiamock/
-        # El-Badry et al. 2024, 2024OJAp....7E.100E
+        """
+        Adopted from gaiamock https://github.com/kareemelbadry/gaiamock/
+        El-Badry et al. 2024, 2024OJAp....7E.100E
+        Parameters
+        ----------
+        G: object's magnitude in band G
+
+        Returns
+        -------
+        per CCD error in mas (float)
+        """
         G_vals =    [ 4,    5,   6,     7,   8.2,  8.4, 10,    11,    12,  13,    14,   15,   16,   17,   18,   19,  20]
         sigma_wal = [0.4, 0.35, 0.15, 0.17, 0.23, 0.13,0.13, 0.135, 0.125, 0.13, 0.15, 0.23, 0.36, 0.63, 1.05, 2.05, 4.1]
         return np.interp(G, G_vals, sigma_wal)
     
     def _querySimbadGaia(self):
+        """
+        Internal function to query the Gaia and Simbad database if missing requested parameters
+        """
         self.ObjectRA = None
         self.ObjectDEC = None
         self.id3 = None 
@@ -252,6 +305,7 @@ class SimBinary:
                         DEC, VRA, VDEC and GAIA DR3 ID to avoid Simbad query.')
             
             if self.id3 is None:
+                # query Simbad to get Gaia DR3 id
                 ids = result['ids'][0].split('|')
                 gaia_id = [s for s in ids if 'Gaia DR3' in s]
                 if len(gaia_id) == 0:
@@ -261,6 +315,7 @@ class SimBinary:
                 print('Gaia DR3 ID added with Simbad')
                 
         if None in [self.ObjectRA, self.ObjectPMRA, self.ObjectGmag]:
+            # query Gaia DR3 based on id
             Gaia.ROW_LIMIT = 1  
             query = f"""
             SELECT *
@@ -285,14 +340,22 @@ class SimBinary:
                 print('Gmag added with Gaia DR3')
             
     def LoadGost(self):
-        
-        name = self.ObjectName.replace(' ', '_')
+        """
+        Load Gost data for object's coordinates
+        Returns
+        -------
+        Dataframe with Gost data (obs dates, scan angles, parallax factors)
+        """
+        name = self.ObjectName.replace(' ', '_') # avoid space
         filepath = f"gost/gost_{name}.csv"
+        # check if the file already exists
         if os.path.isfile(filepath):
-            gostdata = pd.read_csv(filepath, sep=',')
+            gostdata = pd.read_csv(filepath, sep=',') # load the existing file
         else:
+            # if not, download Gost data
             gostdata = self.DownloadGost(self.ObjectRA, self.ObjectDEC, self.ObjectName)
             if self.SaveGost:
+                # if save Gost, save the data in "gost" folder of current working directory
                 if not os.path.isdir('gost/'):
                     os.mkdir('gost/')
                 print(f"Downloading GOST data to {os.getcwd()+'/gost'}.")
@@ -300,8 +363,15 @@ class SimBinary:
         return gostdata
     
     def LimitGost(self, gostdata, DR):
-        TstopDRs = {1:'2015-09-16T00:00:00',
-                 2:'2016-05-23T11:35:00',
+        """
+        Limit in time Gost data depending on the Data Release
+        Parameters
+        ----------
+        gostdata : Dataframe with Gost data
+        DR : Data Release (from 1 to 5)
+        """
+        TstopDRs = {1:'2015-09-16T00:00:00', # Gaia data releases data acquisition limits
+                 2:'2016-05-23T11:35:00',    # from Gaia documentation
                  3:'2017-05-28T08:44:00',
                  4:'2020-01-20T22:00:00',
                  5:'2025-01-16T00:00:00'}
@@ -322,9 +392,20 @@ class SimBinary:
         
                     
     def DownloadGost(self, ra, dec, target_name):
+        """
+        Download Gost data from https://gaia.esac.esa.int/gost/ based on object's coordinates.
+        Adapted from Download_HIP_Gaia_GOST by Yicheng Rui:
+        https://github.com/ruiyicheng/Download_HIP_Gaia_GOST/tree/main
+        Parameters
+        ----------
+        ra : float
+        dec : float
+        target_name : string
 
-        # Adapted from Download_HIP_Gaia_GOST by Yicheng Rui
-        # https://github.com/ruiyicheng/Download_HIP_Gaia_GOST/tree/main
+        Returns
+        -------
+        Dataframe with Gost data
+        """
         url = f"https://gaia.esac.esa.int/gost/GostServlet?ra={str(ra)}+&dec={str(dec)}"
 
         with requests.Session() as s:
@@ -352,7 +433,11 @@ class SimBinary:
         return data
     
     def LightCurve(self):
-        
+        """
+        Create synthetic ASAS-like light curve (irregular sampling + noise).
+        Stored in self.lc as a pandas DataFrame.
+        Developed by Leen Decin.
+        """
         Vmin = self.ObjectParameters['Vmin']
         Vmax = self.ObjectParameters['Vmax']
         Ppuls = self.ObjectParameters['Ppuls']
@@ -360,10 +445,7 @@ class SimBinary:
         Gamma = self.ObjectParameters.get('Gamma', 0.0)
         seed = self.ObjectParameters.get('seed_conv', 1234)
         rng = np.random.default_rng(seed)
-        # ------------------------------------------------------------
-        # Create synthetic ASAS-like light curve (irregular sampling + noise)
-        # Stored in self.lc as a pandas DataFrame
-        # ------------------------------------------------------------
+
         # You can expose these as ObjectParameters if you like
         Nlc = self.ObjectParameters.get('Nlc', 350)          # typical few hundred points
         season_length = self.ObjectParameters.get('LC_season_days', 220)  # observing season per year
@@ -437,9 +519,20 @@ class SimBinary:
         self.has_lightcurve = True
  
     def FluxRatio(self, times, Tplot=0):
+        """
+
+        Parameters
+        ----------
+        times : array-like.
+        Tplot : float. Default is 0.
+
+        Returns
+        -------
+        DataFrame containing flux ratio between components.
+        """
         
         fdata = pd.DataFrame(columns=['r1', 'r2'])
-        
+        # case if using GaiaPuls
         if self.ObjectType == 'cepheid' and self.GaiaPuls:
             puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot = self.addPulsationGaia(times, Tplot)
             fdata['puls'] = puls
@@ -450,7 +543,7 @@ class SimBinary:
             fdata['r2_nps'] = r2_nps
             fdata['f_tot'] = f_tot
             self.has_pulsation = True
-            
+        # case if using sinus-like or asymmetric sinus-like pulsation
         elif self.ObjectType == 'cepheid' or self.ObjectType == 'AGB':
             required = ['Vmin', 'Vmax', 'Vcomp', 'Ppuls', 'T0puls']
             if all(key in self.ObjectParameters for key in required):
@@ -468,10 +561,10 @@ class SimBinary:
             self.has_pulsation = True
             
         elif self.ObjectType == 'binary':
+            # calculate the magnitude of the star number 1 (main) knowing the total (ObjectGmag from Gaia) and companion's magnitudes
             mag_main = - 2.5*np.log10(10**(-0.4*(self.ObjectGmag))-10**(-0.4*(self.ObjectParameters['Vcomp'])))
-            # mag_main = self.ObjectParameters['Vmain']
-            f_main = 10**(-0.4*(mag_main-self.ObjectGmag))
-            f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
+            f_main = 10**(-0.4*(mag_main-self.ObjectGmag)) # get main's flux taking total as reference
+            f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag)) # get companion's flux taking total as reference
             
             fdata['r1'] = [f_main/(f_comp+f_main)] # main star
             fdata['r2'] = [f_comp/(f_comp+f_main)] # companion
@@ -490,21 +583,34 @@ class SimBinary:
         return fdata
         
     def addPulsation(self, times, Tplot):
+        """
+        Gives flux ratios considering the pulsation (sin or asymm sin cases)
+        Parameters
+        ----------
+        times : array-like.
+        Tplot : float. Use 0 in default case.
+
+        Returns
+        -------
+        puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
+        7 arrays of length len(times)
+        """
             
         Vmin = self.ObjectParameters['Vmin']
         Vmax = self.ObjectParameters['Vmax']
         Vcomp = self.ObjectParameters['Vcomp']
         Ppuls = self.ObjectParameters['Ppuls']
         T0 = self.ObjectParameters['T0puls']
-        T0 = T0 - self.Tref.jd # converting T0 with a correct time reference
+        T0 = T0 - self.Tref.jd # converting T0 with in a correct time reference (Gaia's)
         T0 = T0 - Tplot
         
-        Gamma = self.ObjectParameters.get('Gamma', 0.0)
+        Gamma = self.ObjectParameters.get('Gamma', 0.0) # take 0 if Gamma is not defined
         
         # minimal cepheid flux and companion flux relative to ref flux
         # F/Fref = 10**(-0.4*(m-mref))
-        Vmean = np.mean([Vmax, Vmin]) # reference flux 
-        f_comp = 10**(-0.4*(Vcomp-Vmean))
+        # reference magnitude
+        Vref = self.ObjectGmag #np.mean([Vmax, Vmin])
+        f_comp = 10**(-0.4*(Vcomp-Vref))
         
         x = 2*np.pi*(times - T0)/Ppuls  # phase argument; use -T0 (time of reference)
         if np.isclose(Gamma, 0.0):
@@ -515,8 +621,8 @@ class SimBinary:
         puls = (Vmax-Vmin)/2 * factor + (Vmax+Vmin)/2
         
         puls_ceph = - 2.5*np.log10(10**(-0.4*(puls))-10**(-0.4*(Vcomp)))
-        f_ceph = 10**(-0.4*(puls_ceph-Vmean))
-        # flux fraction for each component        
+        f_ceph = 10**(-0.4*(puls_ceph-Vref))
+        # flux ratio for each component
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
         r2 = f_comp/(f_comp+f_ceph) # companion
         
@@ -524,7 +630,7 @@ class SimBinary:
         
         # binary system without the pulsating component, non-pulsating system (nps)
         # f_mean = np.mean([f_max, f_min])
-        f_mean = 10**(-0.4*(Vmean-Vmax))*np.ones(len(puls))
+        f_mean = 10**(-0.4*(Vref-Vmax))*np.ones(len(puls))
         # f_mean = np.mean(f_ceph)
         r1_nps = f_mean/(f_comp+f_mean) # cepheid
         r2_nps = f_comp/(f_comp+f_mean) # companion
@@ -532,6 +638,13 @@ class SimBinary:
         return puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
     
     def _queryGaiaCepheid(self):
+        """
+        Gives pulsation parameters provided with Gaia DR3 Cepheid catalogue.
+        Returns
+        -------
+        DataFrame with pulsation parameters
+        """
+        # query Gaia DR3 Cepheid catalog
         Gaia.ROW_LIMIT = 1  
         query = f"""
         SELECT *
@@ -544,7 +657,7 @@ class SimBinary:
         if len(cepheid_data) == 0:
             raise ValueError('The object was not found in gaiadr3.vari_cepheid.\
                              You can add the pulsation parameters manually.')
-        
+        # get pulsating parameters from the catalog
         A0 = cepheid_data['int_average_g'].data[0]
         N = cepheid_data['num_harmonics_for_p1_g'].data[0] 
         As = cepheid_data['fund_freq1_harmonic_ampl_g'][0][:N].compressed()
@@ -554,13 +667,14 @@ class SimBinary:
         T0 = T0 + Time(2016,format='decimalyear').jd # converting T0 to jd, 2016 DR3 ref
         T0 = T0 - self.Tref.jd # converting T0 with a correct time reference
         P = cepheid_data['pf'].data[0]
-        if np.ma.is_masked(P): 
+        if np.ma.is_masked(P): # if no "pf" use "p1_o" (sometimes it's missing)
             P = cepheid_data['p1_o'].data[0]
             print('The p1_o period used')
-        if np.ma.is_masked(P): 
+        if np.ma.is_masked(P): # if no "pf" and "p1_o" use 1/"fund_freq1" (just in case)
             P = 1/cepheid_data['fund_freq1'].data[0]
             print('The 1/fund_freq period used')
-                
+
+        # save pulsation parameters to a dataframe
         self.PulsParams = pd.DataFrame(columns=['A0', 'N', 'As', 'phis', 'T0', 'P'])
         
         self.PulsParams['As'] = np.array(As)
@@ -570,28 +684,41 @@ class SimBinary:
         self.PulsParams['T0'] = np.array(T0)
         self.PulsParams['P'] = np.array(P)
         
-    def addPulsationGaia(self, times, Tplot):
-        
+    def addPulsationGaia(self, times, Tplot=0):
+        """
+        Gives flux ratios considering the pulsation provided with Gaia DR3.
+        Parameters
+        ----------
+        times : array-like.
+        Tplot : float. Use 0 in default case.
+        Returns
+        -------
+        puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
+        7 arrays of length len(times)
+        """
+
+        # get pulsation parameters
         T0 = self.PulsParams['T0'][0] - Tplot
-        
         A0 = self.PulsParams['A0'][0]
         N = self.PulsParams['N'][0]
         As = self.PulsParams['As'].values
         phis = self.PulsParams['phis'].values
         P = self.PulsParams['P'][0]
-        
+
+        # get an array describing the pulsation
         k = np.arange(1,N+1)
         arg = 2*np.pi*k[:, None]*(times - T0)/P + phis[:, None]
         puls = A0 + np.sum(As[:, None]*np.cos(arg), axis=0)
         
-        self.ObjectParameters['Ppuls'] = P
-        
+        self.ObjectParameters['Ppuls'] = P # add the pulsation period to the parameters dictionary
+
+        # get only the cepheid contribution
         puls_ceph = - 2.5*np.log10(10**(-0.4*(puls))-10**(-0.4*(self.ObjectParameters['Vcomp'])))
         f_ceph = 10**(-0.4*(puls_ceph-self.ObjectGmag))
         f_comp = 10**(-0.4*(self.ObjectParameters['Vcomp']-self.ObjectGmag))
         f_mean = np.mean(f_ceph)*np.ones(len(puls))
         
-        f_tot = f_ceph+f_comp
+        f_tot = f_ceph+f_comp # total flux
         
         # flux fraction for each component  
         r1 = f_ceph/(f_comp+f_ceph) # cepheid
@@ -604,11 +731,25 @@ class SimBinary:
         return puls, puls_ceph, r1, r2, r1_nps, r2_nps, f_tot
     
     def addConvectionJitter(self, times):
+        """
+        Provides RA and DEC positions of a convective star's photocentre
+        Developed by Leen Decin.
+        Parameters
+        ----------
+        times : array-like.
+
+        Returns
+        -------
+        Two array-like.
+        RA and DEC of the AGB star's photocentre
+        """
         
         if times is self.reltimes:
-            
+            # if the times is the default ones, no need for interpolation
             return self.dra_conv_mas, self.ddec_conv_mas
-        
+
+        # interpolation is used for plotting
+
         # binning to have the same value per observation
         sim_astrometry = pd.DataFrame()
         sim_astrometry['times'] = self.reltimes
@@ -642,12 +783,14 @@ class SimBinary:
         
         """
         Create convection/inhomogeneity photocentre jitter for the *primary*.
-
+        Developed by Leen Decin.
+        Parameters
+        ----------
         sigma_AU: stationary 1D std of photocentre offset in AU (typical 0.08–0.2 AU ballpark).
         tau_days: correlation time in days (months-to-years; try 100–400 d first).
         phase_mod_amp: optional coupling to pulsation phase (0 = none).
                     If >0 and pulsation params exist, sigma is modulated by (1 + A*cos(phase)).
-        # Use of 
+
         """
         
         R_star = self.ObjectParameters.get('R_star', 1)
@@ -700,6 +843,7 @@ class SimBinary:
         # An Ornstein–Uhlenbeck (OU) process is a continuous-time stochastic process that describes 
         # random motion with a tendency to relax back to a preferred value. It is often summarized as 
         # “mean-reverting Brownian motion.”
+        Developed by Leen Decin.
 
         Parameters
         ----------
@@ -758,6 +902,17 @@ class SimBinary:
         return x
 
     def orbit(self, theta, times): # orbit model
+        """
+        Orbit function with Campbell.
+        Parameters
+        ----------
+        theta : dictionary containing P, a, e, i (deg), Omega (deg), w (deg) and T0
+        times : array-like
+
+        Returns
+        -------
+        RA and DEC arrays of the orbit
+        """
         
         to_rad = (u.deg).to(u.rad)
     
@@ -780,8 +935,20 @@ class SimBinary:
         return np.array([delt_ra, delt_dec])
 
     def SimGaia(self, times, fdata, factra, factdec):
+        """
+        Simulate Gaia epoch astrometry
+        Parameters
+        ----------
+        times : array-like
+        fdata : dataframe. Flux ratio information from flux_ratio
+        factra : array-like. Parallax factors of RA
+        factdec : array-like. Parallax factors of DEC
+
+        Returns
+        -------
+        DataFrame
+        """
         # primary star/BH parameters, w+pi because it is on the opposite side to companion
-        
         q_comp = self.ObjectParameters['q']/(1+self.ObjectParameters['q'])
         ang1 = 180
         ang2 = 0
@@ -808,8 +975,8 @@ class SimBinary:
                    'P':self.ObjectParameters['P']}
         
         # convert pm to mas/day
-        vra = self.ObjectPMRA/365.25
-        vdec = self.ObjectPMDEC/365.25
+        pmra = self.ObjectPMRA/365.25
+        pmdec = self.ObjectPMDEC/365.25
         plx = self.ObjectParameters['plx']
         
         data = pd.DataFrame(columns=['ra1', 'dec1', 'ra2', 'dec2', 
@@ -864,12 +1031,12 @@ class SimBinary:
         
         
         # adding proper motion to the binary system (bs)
-        data['ra_bs'] = data['ra_ph'] + vra*times
-        data['dec_bs'] = data['dec_ph'] + vdec*times
+        data['ra_bs'] = data['ra_ph'] + pmra*times
+        data['dec_bs'] = data['dec_ph'] + pmdec*times
 
         # proper motion alone to model single star (ss)
-        data['ra_ss'] = vra*times
-        data['dec_ss'] = vdec*times
+        data['ra_ss'] = pmra*times
+        data['dec_ss'] = pmdec*times
         
         if self.has_pulsation:
             data['ra_ph_nps'] = (data['ra1']*fdata['r1_nps'] + data['ra2']*fdata['r2_nps'])
@@ -896,8 +1063,16 @@ class SimBinary:
         return data
     
     def SimWAL(self, errCCD):
-        
-        
+        """
+        Simulates along scan positions of the target.
+        Parameters
+        ----------
+        errCCD : Boolean. Default is False.
+
+        Returns
+        -------
+        Array of along scan positions
+        """
         fdata = self.FluxRatio(self.reltimes)
         
         # projecting parallax factors to ra, dec
@@ -926,6 +1101,17 @@ class SimBinary:
         return self.w_bs
     
     def orbitTI(self, x, t):
+        """
+        Orbit function with Thiele-Innes.
+        Parameters
+        ----------
+        x : array_like. P, e, A, F, B, G, T, where AFBG are Thiele-Innes.
+        t : array_like.
+
+        Returns
+        -------
+        RA and DEC arrays of the orbit
+        """
         P, e, A, F, B, G, T = x
 
         M = 2*np.pi/P*(t-T)
@@ -940,9 +1126,31 @@ class SimBinary:
         return np.array([delt_ra, delt_dec])
     
     def residuals(self, x, t, y):
+        """
+        Calculates residuals.
+        Parameters
+        ----------
+        x : array_like. Orbit parameters P, e, A, F, B, G, T, where AFBG are Thiele-Innes.
+        t : array_like. Time.
+        y : array_like.
+
+        Returns
+        -------
+        Array of residuals
+        """
         return ((self.orbitTI(x, t)-y)**2).ravel()
     
     def get_dataframe(self, data_dir=None):
+        """
+        Gives dataframe containing simulated data.
+        Parameters
+        ----------
+        data_dir: str. Default is None.
+
+        Returns
+        -------
+        Dataframe containing simulated data.
+        """
         # resulting datatframe
         sim_astrometry = pd.DataFrame()
         sim_astrometry['transit_id'] = np.arange(1,len(self.timesjd)+1,1) # we don't have the true ones
@@ -960,7 +1168,17 @@ class SimBinary:
         return sim_astrometry
     
     def SimPlot(self, times, fdata=None):
-        
+        """
+        Produces data to plot.
+        Parameters
+        ----------
+        times : array_like.
+        fdata : dictionary containing flux ratios. Default is None.
+
+        Returns
+        -------
+        Dataframe containing simulated data.
+        """
         if fdata is None:
             fdata = self.FluxRatio(times)
         
@@ -978,6 +1196,21 @@ class SimBinary:
         return data 
     
     def Plot(self, plot_dir=None, Npoints=500, scan_axis=None, scan_length=None, errCCD=False):
+        """
+        Plots simulated data. Orbit + On-sky.
+        Parameters
+        ----------
+        plot_dir : str. Default is None.
+        Npoints : int. Default is 500. Points to interpolate.
+        scan_axis : array_like. Default is None. Add scan direction
+        scan_length : array_like. Default is None. Length of scan to plot.
+        Can be [x,y] where x is for ax1 and y is for ax2. Or just x for both subplots.
+        errCCD : Boolean. Default is False. If True add errors to the plot (Not error bars).
+
+        Returns
+        -------
+        ax1, ax2 of subplots
+        """
         
         if self.perturbation:
             if isinstance(self.perturbation['value'], (list, tuple, np.ndarray)):
@@ -1108,6 +1341,17 @@ class SimBinary:
         return axs
         
     def PlotCepheid(self, plot_dir= None, Npoints=500):
+        """
+            Plots simulated data for VIM. Pulsation + Orbit + On-sky.
+            Parameters
+            ----------
+            plot_dir : str. Default is None.
+            Npoints : int. Default is 500. Points to interpolate.
+
+            Returns
+            -------
+            ax1, ax2, ax3 of subplots
+        """
         if not self.has_pulsation:
             raise KeyError(f"This plot is only for VIM (cepheid or AGB). The current type is {self.ObjectType}")
         
@@ -1265,6 +1509,17 @@ class SimBinary:
         return [ax1, ax2, ax3]
     
     def PlotCepheidRow(self, plot_dir= None, Npoints=500):
+        """
+            Plots simulated data for VIM. Pulsation + Orbit + On-sky.
+            Parameters
+            ----------
+            plot_dir : str. Default is None.
+            Npoints : int. Default is 500. Points to interpolate.
+
+            Returns
+            -------
+            ax1, ax2, ax3 of subplots
+        """
         if not self.has_pulsation:
             raise KeyError(f"This plot is only for VIM (cepheid or mira). The current type is {self.ObjectType}")
         
@@ -1401,6 +1656,16 @@ class SimBinary:
         return [ax1, ax2, ax3]
     
     def fitSS(self, w_bs):
+        """
+        Fits Single-Star model to given array.
+        Parameters
+        ----------
+        w_bs : array-like. Along scan positions.
+
+        Returns
+        -------
+        fitter parameters array and fitted along-scan positions array.
+        """
         mA = np.array([
             np.sin(self.scanAngleRAD),                # alpha0
             self.reltimes*np.sin(self.scanAngleRAD),        # pmra
@@ -1430,6 +1695,16 @@ class SimBinary:
         return p_fit, w_fit
     
     def PlotSSfit(self, plot_dir=None):
+        """
+        Plots fitted Single-Star model to the object.
+        Parameters
+        ----------
+        plot_dir : str. optional. Default = None.
+
+        Returns
+        -------
+        ax1, ax2 of subplots
+        """
         
         factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
         factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
