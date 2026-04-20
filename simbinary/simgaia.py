@@ -815,12 +815,13 @@ class SimBinary:
         # Optional: let jitter be larger near maximum expansion (simple toy coupling)
         sig = float(sigma_AU)
         if phaseA != 0.0 and ('Ppuls' in self.ObjectParameters) and ('T0puls' in self.ObjectParameters):
-            Ppuls = params['Ppuls']
-            T0puls = params['T0puls']
+            Ppuls = self.ObjectParameters['Ppuls']
+            T0puls = self.ObjectParameters['T0puls']
+            T0 = self.ObjectParameters['T0']
             T0 = T0 - self.Tref.jd # converting T0 with a correct time reference
             # your timesjd exists; use it for phase if available
-            phase = 2*np.pi*(times - T0puls)/Ppuls
-            mod = 1.0 + float(phase_mod_amp)*np.cos(phase)
+            phase = 2*np.pi*(self.reltimes - T0puls)/Ppuls
+            mod = 1.0 + float(phaseA)*np.cos(phase)
             mod = np.clip(mod, 0.1, None)  # avoid negative sigma
         else:
             mod = 1.0
@@ -1041,8 +1042,8 @@ class SimBinary:
         if self.has_pulsation:
             data['ra_ph_nps'] = (data['ra1']*fdata['r1_nps'] + data['ra2']*fdata['r2_nps'])
             data['dec_ph_nps'] = (data['dec1']*fdata['r1_nps'] + data['dec2']*fdata['r2_nps'])
-            data['ra_nps'] = (data['ra1']*fdata['r1_nps'] + data['ra2']*fdata['r2_nps']) + vra*times
-            data['dec_nps'] = (data['dec1']*fdata['r1_nps'] + data['dec2']*fdata['r2_nps']) + vdec*times
+            data['ra_nps'] = (data['ra1']*fdata['r1_nps'] + data['ra2']*fdata['r2_nps']) + pmra*times
+            data['dec_nps'] = (data['dec1']*fdata['r1_nps'] + data['dec2']*fdata['r2_nps']) + pmdec*times
             self.a_ph_min = (self.ObjectParameters['q']/(1+self.ObjectParameters['q'])*np.min(fdata['r1']) -\
                     1/(1+self.ObjectParameters['q'])*np.max(fdata['r2']))*self.ObjectParameters['a']
             self.a_ph_max = (self.ObjectParameters['q']/(1+self.ObjectParameters['q'])*np.max(fdata['r1']) -\
@@ -1074,6 +1075,7 @@ class SimBinary:
         Array of along scan positions
         """
         fdata = self.FluxRatio(self.reltimes)
+        self.FluxData = fdata
         
         # projecting parallax factors to ra, dec
         factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
@@ -1655,44 +1657,7 @@ class SimBinary:
                         dpi=300, bbox_inches="tight")
         return [ax1, ax2, ax3]
     
-    def fitSS(self, w_bs):
-        """
-        Fits Single-Star model to given array.
-        Parameters
-        ----------
-        w_bs : array-like. Along scan positions.
-
-        Returns
-        -------
-        fitter parameters array and fitted along-scan positions array.
-        """
-        mA = np.array([
-            np.sin(self.scanAngleRAD),                # alpha0
-            self.reltimes*np.sin(self.scanAngleRAD),        # pmra
-            np.cos(self.scanAngleRAD),                # delta0
-            self.reltimes*np.cos(self.scanAngleRAD),        # pmdec
-            self.plxFactorAL                          # parallax
-            ]).T
-        werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
-        Cinv = np.diag(1/werr**2)
-        p_fit = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
-        w_fit = mA @ p_fit
-        
-        chi2r = np.sum(((w_bs-w_fit)/werr)**2)/(len(w_fit)-5)
-        print('chi2r', np.round(chi2r, 3))
-        
-        F = mA.T @ Cinv @ mA
-        Cov_p = np.linalg.inv(F)
-        errors = np.sqrt(np.diag(Cov_p))
-        errors = errors * chi2r
-        
-        labels = ['a0', 'pmra', 'd0', 'pmdec', 'plx']
-        
-        for p, e, l in zip(p_fit, errors, labels):
-            
-            print(l, np.round(p,4), '\u00B1', np.round(e,4))
-        
-        return p_fit, w_fit
+    
     
     def PlotSSfit(self, plot_dir=None):
         """
@@ -1709,7 +1674,7 @@ class SimBinary:
         factra = -self.plxFactorAL*np.sin(self.scanAngleRAD)+self.plxFactorAC*np.cos(self.scanAngleRAD)
         factdec = self.plxFactorAL*np.cos(self.scanAngleRAD)+self.plxFactorAC*np.sin(self.scanAngleRAD)
         
-        p_fit, w_fit = self.fitSS(self.w_bs)
+        p_fit, errors, w_fit = self.fitSS(self.w_bs)
         r0, pmr, d0, pmd, plx = p_fit
         ra = r0 + pmr*self.reltimes + plx*factra
         dec = d0 + pmd*self.reltimes + plx*factdec
@@ -1752,3 +1717,197 @@ class SimBinary:
                         dpi=300, bbox_inches="tight")
             
         return axs
+    def fitSS(self, w_bs=None):
+        """
+        Fits Single-Star model to given array.
+        Parameters
+        ----------
+        w_bs : array-like. Along scan positions.
+
+        Returns
+        -------
+        fitter parameters, their errors, and fitted along-scan positions array.
+        """
+        
+        if w_bs is None:
+            w_bs = self.w_bs
+        
+        mA = np.array([
+            np.sin(self.scanAngleRAD),                # alpha0
+            self.reltimes*np.sin(self.scanAngleRAD),  # pmra
+            np.cos(self.scanAngleRAD),                # delta0
+            self.reltimes*np.cos(self.scanAngleRAD),  # pmdec
+            self.plxFactorAL                          # parallax
+            ]).T
+        werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
+        Cinv = np.diag(1/werr**2)
+        p_fit = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
+        w_fit = mA @ p_fit
+        
+        chi2r = np.sum(((w_bs-w_fit)/werr)**2)/(len(w_fit)-5)
+        print('chi2r', np.round(chi2r, 3))
+        
+        F = mA.T @ Cinv @ mA
+        Cov_p = np.linalg.inv(F)
+        errors = np.sqrt(np.diag(Cov_p))
+        errors = errors * chi2r
+        
+        labels = ['a0', 'pmra', 'd0', 'pmdec', 'plx']
+        
+        for p, e, l in zip(p_fit, errors, labels):
+            
+            print(l, np.round(p,4), '\u00B1', np.round(e,4))
+        
+        return p_fit, errors, w_fit
+    
+    def fitVIMF(self, w_bs=None):
+        """
+        Fits Variability-Induced Mover Fixed model to given array.
+        Parameters
+        ----------
+        w_bs : array-like. Along scan positions.
+    
+        Returns
+        -------
+        fitter parameters, their errors, and fitted along-scan positions array.
+        """
+        
+        if w_bs is None:
+            w_bs = self.w_bs
+            
+        flux = self.FluxData['f_tot']
+        fref = np.mean(flux)
+        werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
+        
+        mA = np.array([
+            np.sin(self.scanAngleRAD),                # alpha0
+            self.reltimes*np.sin(self.scanAngleRAD),  # pmra
+            np.cos(self.scanAngleRAD),                # delta0
+            self.reltimes*np.cos(self.scanAngleRAD),  # pmdec
+            self.plxFactorAL,                         # parallax
+            (fref/flux-1)*np.sin(self.scanAngleRAD),  # Da
+            (fref/flux-1)*np.cos(self.scanAngleRAD),  # Dd
+            ]).T
+        Cinv = np.diag(1/werr**2)
+        mu = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
+        w_fit = np.dot(mA, mu)
+        return w_fit, mu
+    
+    def fitVIML(self, w_bs=None):
+        """
+        Fits Variability-Induced Mover Linear model to given array.
+        Parameters
+        ----------
+        w_bs : array-like. Along scan positions.
+    
+        Returns
+        -------
+        fitter parameters, their errors, and fitted along-scan positions array.
+        """
+        
+        if w_bs is None:
+            w_bs = self.w_bs
+            
+        flux = self.FluxData['f_tot']
+        fref = np.mean(flux)
+        werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
+        
+        mA = np.array([
+            np.sin(self.scanAngleRAD),                             # alpha0
+            self.reltimes*np.sin(self.scanAngleRAD),               # pmra
+            np.cos(self.scanAngleRAD),                             # delta0
+            self.reltimes*np.cos(self.scanAngleRAD),               # pmdec
+            self.plxFactorAL,                                       # parallax
+            (fref/flux-1)*np.sin(self.scanAngleRAD),               # Da
+            (fref/flux-1)*self.reltimes*np.sin(self.scanAngleRAD), # Dat
+            (fref/flux-1)*np.cos(self.scanAngleRAD),               # Dd
+            (fref/flux-1)*self.reltimes*np.cos(self.scanAngleRAD)  # Ddt
+            ]).T
+        Cinv = np.diag(1/werr**2)
+        mu = np.linalg.solve(mA.T @ Cinv @ mA, mA.T @ Cinv @ w_bs)
+        w_fit = np.dot(mA, mu)
+        return w_fit, mu
+
+    def VIMA(self, parameters):
+        """
+        Defines the VIMA model
+        Parameters
+        ----------
+        parameters : parameters of the VIMA model
+    
+        Returns
+        -------
+        fitter parameters, their errors, and fitted along-scan positions array.
+        """
+            
+        flux = self.FluxData['f_tot']
+        fref = np.mean(flux)
+        
+    
+        alpha0, pmra, delta0, pmdec, parallax, Da, Dd, Dat, Ddt, k, s = parameters
+    
+        dDat = -k * Dd
+        dDdt =  k * Da
+    
+        dpmra  = s * dDat
+        dpmdec = s * dDdt
+    
+        factor = (fref/flux - 1)
+    
+        w_fit = (
+            alpha0*np.sin(self.scanAngleRAD)                       # a0
+            + pmra*self.reltimes*np.sin(self.scanAngleRAD)         # pmra
+            + 0.5*dpmra*self.reltimes**2*np.sin(self.scanAngleRAD) # proper acceleration ra
+            + delta0*np.cos(self.scanAngleRAD)                     # d0
+            + pmdec*self.reltimes*np.cos(self.scanAngleRAD)        # pmdec
+            + 0.5*dpmdec*self.reltimes**2*np.cos(self.scanAngleRAD)# proper acceleration dec
+            + parallax*self.plxFactorAL                            # plx
+            + factor*(
+                Da*np.sin(self.scanAngleRAD)                          # Da
+                + Dat*self.reltimes*np.sin(self.scanAngleRAD)         # Da'
+                + 0.5*dDat*self.reltimes**2*np.sin(self.scanAngleRAD) # Da"
+                + Dd*np.cos(self.scanAngleRAD)                        # Dd
+                + Ddt*self.reltimes*np.cos(self.scanAngleRAD)         # Dd'
+                + 0.5*dDdt*self.reltimes**2*np.cos(self.scanAngleRAD) # Dd"
+            )
+        )
+    
+        return w_fit
+    
+    def fitVIMA(self, parameters0, w_bs=None):
+        """
+        Fits Variability-Induced Mover Accelerated model to given array.
+        Parameters
+        ----------
+        parameters0 : initial guess
+        w_bs : array-like. Along scan positions.
+    
+        Returns
+        -------
+        fitter parameters, their errors, and fitted along-scan positions array.
+        """
+        
+        if w_bs is None:
+            w_bs = self.w_bs
+            
+        werr = np.array(len(w_bs)*[self.errALCCD(self.ObjectGmag)])
+        
+        def residulas(params):
+            w_fit = self.VIMA(params)
+            return (w_bs - w_fit) / werr
+        
+        res_lsq = least_squares(residulas, parameters0)
+        w_fitA = self.VIMA(res_lsq.x)
+        
+        a0A, pmraA, dA, pmdecA, plxA, DaA, DdA, DatA, DdtA, kA, sA = res_lsq.x
+
+        dDatA = -kA * DdA
+        dDdtA =  kA * DaA
+
+        dpmraA  = sA * dDatA
+        dpmdecA = sA * dDdtA
+
+        p_fitA = [a0A, pmraA, dA, pmdecA, plxA, DaA, DdA, DatA, DdtA, dDatA, dDdtA, dpmraA, dpmdecA]
+        
+        return w_fitA, p_fitA
+        
